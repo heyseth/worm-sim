@@ -7,7 +7,7 @@ Despite being so simple, C. elegans has several complex behaviors. They will mov
 In this demo, hunger neurons are continuously stimulated. If the worm nears food, food sensing neurons are stimulated. If the worm nears the edge of the window, nose touch sensory neurons are stimulated.
 
 ## Usage
-Head on over to [seth-miller.me/worm-sim](http://seth-miller.me/worm-sim) and watch the worm wriggle around. Click to place down food. The green dots at the top are a visual representation of the connectome, with each dot representing a neuron (increased opacity = increased activity). There are buttons to hide the connectome, reset the worm's position, and to clear placed down food.
+Head on over to [heyseth.github.io/worm-sim/](https://heyseth.github.io/worm-sim/) and watch the worm wriggle around. Click to place down food. The green dots at the top are a visual representation of the connectome, with each dot representing a neuron (increased opacity = increased activity). There are buttons to hide the connectome, reset the worm's position, and to clear placed down food.
 
 To restate, the worm you see on your screen is being controlled entirely by a virtual worm brain. Very cool if you ask me!
 
