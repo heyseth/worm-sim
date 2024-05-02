@@ -41,13 +41,26 @@ function updateBrain() {
         psBox.style.backgroundColor = "#55FF55";
         psBox.style.opacity = Math.min(1, neuron / 50);
     }
-    targetDir = facingDir + ((BRAIN.accumleft - BRAIN.accumright) / 19 * Math.PI);
-    targetSpeed = (Math.abs(BRAIN.accumleft) + Math.abs(BRAIN.accumright)) / 100;
-    speedChangeInterval = (targetSpeed - speed) / 30;
+    let scalingFactor = 20;
+    let newDir = ((BRAIN.accumleft - BRAIN.accumright) / scalingFactor);
+    targetDir = facingDir + (newDir * Math.PI);
+    //targetDir = facingDir + calculateFinalDirection(BRAIN.accumleft/200, BRAIN.accumright/200);
+    targetSpeed = (Math.abs(BRAIN.accumleft) + Math.abs(BRAIN.accumright)) / (scalingFactor*5);
+    speedChangeInterval = (targetSpeed - speed) / (scalingFactor*1.5);
 }
 
 BRAIN.randExcite();
 setInterval(updateBrain, 500);
+
+function calculateFinalDirection(leftPercentage, rightPercentage) {
+    const maxTurnAngle = Math.PI / 2; // 90 degrees in radians
+    const leftTurnAngle = leftPercentage * maxTurnAngle;
+    const rightTurnAngle = rightPercentage * maxTurnAngle;
+    
+    const finalDirection = rightTurnAngle - leftTurnAngle;
+    
+    return finalDirection;
+  }
 
 //http://jsfiddle.net/user/ARTsinn/fiddles/
 
@@ -194,30 +207,41 @@ function update() {
     target.x += (Math.cos(facingDir) * speed);
     target.y -= (Math.sin(facingDir) * speed);
 
-    for (var i = 0; i < food.length; i++) {
-        if (Math.round(target.x) <= 80 || Math.round(target.x) >= (window.innerWidth - 80) || Math.round(target.y) <= 80 || Math.round(target.y) >= (window.innerHeight - 80)) {
-            BRAIN.stimulateHungerNeurons = false;
-            BRAIN.stimulateNoseTouchNeurons = true;
-            BRAIN.stimulateFoodSenseNeurons = false;
+    // Prevent x from going off the screen
+    if (target.x < 0) {
+        target.x = 0;
+        BRAIN.stimulateNoseTouchNeurons = true;
+    } else if (target.x > window.innerWidth) {
+        target.x = window.innerWidth;
+        BRAIN.stimulateNoseTouchNeurons = true;
+    }
 
-            setTimeout(function() {
-                BRAIN.stimulateHungerNeurons = true;
-                BRAIN.stimulateNoseTouchNeurons = false;
-                BRAIN.stimulateFoodSenseNeurons = false;
-            }, 2000);
-        } else if (Math.hypot(Math.round(target.x) - food[i].x, Math.round(target.y) - food[i].y) <= 20) {
-            food.splice(i, 1);
-            BRAIN.stimulateHungerNeurons = false;
-            BRAIN.stimulateNoseTouchNeurons = false;
+    // Prevent y from going off the screen
+    if (target.y < 0) {
+        target.y = 0;
+        BRAIN.stimulateNoseTouchNeurons = true;
+    } else if (target.y > window.innerHeight) {
+        target.y = window.innerHeight;
+        BRAIN.stimulateNoseTouchNeurons = true;
+    }
+
+    for (var i = 0; i < food.length; i++) {
+        if (Math.hypot(Math.round(target.x) - food[i].x, Math.round(target.y) - food[i].y) <= 50) {
+            // simulate food sense if food nearby
             BRAIN.stimulateFoodSenseNeurons = true;
 
-            setTimeout(function() {
-                BRAIN.stimulateHungerNeurons = true;
-                BRAIN.stimulateNoseTouchNeurons = false;
-                BRAIN.stimulateFoodSenseNeurons = false;
-            }, 2000);
+            if (Math.hypot(Math.round(target.x) - food[i].x, Math.round(target.y) - food[i].y) <= 20) {
+                // eat food if close enough
+                food.splice(i, 1);
+            }
         }
     }
+
+    setTimeout(function() {
+        BRAIN.stimulateHungerNeurons = true;
+        BRAIN.stimulateNoseTouchNeurons = false;
+        BRAIN.stimulateFoodSenseNeurons = false;
+    }, 2000);
 
     // Update IK chain
     chain.update(target);
