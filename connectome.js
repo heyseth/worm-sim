@@ -6,8 +6,8 @@
 
 var BRAIN = {};
 
-// Import the connectome weights from the weights.json file
-BRAIN.weights = require('./weights.json');
+// Import the weights from the weights.js file so it works in the browser
+BRAIN.weights = weights;
 
 // A method that accepts the preSynaptic neuron and updates the postSynaptic neurons with the weighted values
 BRAIN.dendriteAccumulate = function (preSynaptic) {
