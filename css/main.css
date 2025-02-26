@@ -1,0 +1,122 @@
+html,
+body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+canvas {
+    display: block;
+    background-color: #222;
+}
+
+.brainNode {
+    border-radius: 50%;
+    display: inline-block;
+    height: 3vmin;
+    width: 3vmin;
+    text-align: center;
+    transition: opacity .5s;
+    /* trigger hardware acceleration */
+    -webkit-transform: translate3d(0, 0, 0);
+    -webkit-transform: translateZ(0);
+    -webkit-transform-style: preserve-3d;
+    will-change: transform;
+    -webkit-backface-visibility: hidden;
+}
+
+#nodeHolder {
+    position: absolute;
+    top: 0;
+    transition: opacity .5s;
+    line-height: 0;
+}
+
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 34px;
+}
+
+.switch input {
+    display: none;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    -webkit-transition: .4s;
+    transition: .4s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 26px;
+    width: 26px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    -webkit-transition: .4s;
+    transition: .4s;
+}
+
+input:checked+.slider {
+    background-color: #55FF55;
+}
+
+input:focus+.slider {
+    box-shadow: 0 0 1px #55FF55;
+}
+
+input:checked+.slider:before {
+    -webkit-transform: translateX(26px);
+    -ms-transform: translateX(26px);
+    transform: translateX(26px);
+}
+
+.slider.round {
+    border-radius: 34px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
+}
+
+#toggleConnectome {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    z-index: 10;
+}
+
+#githubButton {
+    position: absolute;
+    display: inline-block;
+    height: 30px;
+    bottom: 10px;
+    right: 10px;
+}
+
+#buttons {
+    position: absolute;
+    display: inline-block;
+    bottom: 0px;
+    left: calc(50% - 40px);
+    cursor: pointer;
+}
+
+.noselect {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    -khtml-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+}
