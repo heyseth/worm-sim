@@ -717,9 +717,40 @@ BRAIN.update = function () {
 		BRAIN.runconnectome();
 	}
 
-	//RIML RIMR RICL RICR hunger neurons
-	//PVDL PVDR nociceptors
-	//ASEL ASER gustatory neurons
+	// Proprioceptive Feedback Loop: Body curvature stimulates adjacent segments
+	if (typeof chain !== 'undefined' && chain.segmentBends) {
+		for (var i = 1; i < chain.segmentBends.length; i++) {
+			var bend = chain.segmentBends[i];
+			// Map node index to muscle segment (07 to 23)
+			// Nodes are ~25, muscles are 17. Rough mapping:
+			var ratio = 17 / chain.segmentBends.length;
+			var muscleNum = Math.floor((i + 1) * ratio) + 7;
+			
+			if (muscleNum <= 23) {
+				var numStr = muscleNum < 10 ? '0' + muscleNum : '' + muscleNum;
+				// If bent right (bend > 2), stretch receptors on left fire, causing right muscles to contract in next segment to pass wave
+				if (bend < -2) {
+					BRAIN.dendriteAccumulate('MDL' + numStr);
+					BRAIN.dendriteAccumulate('MVL' + numStr);
+				} else if (bend > 2) {
+					BRAIN.dendriteAccumulate('MDR' + numStr);
+					BRAIN.dendriteAccumulate('MVR' + numStr);
+				}
+			}
+		}
+	}
+	
+	// Central Pattern Generator (CPG) for the head to induce natural wriggling
+	var time = Date.now() / 300;
+	if (Math.sin(time) > 0) {
+		BRAIN.dendriteAccumulate('MDL07');
+		BRAIN.dendriteAccumulate('MVL07');
+	} else {
+		BRAIN.dendriteAccumulate('MDR07');
+		BRAIN.dendriteAccumulate('MVR07');
+	}
+
+	BRAIN.runconnectome();
 };
 
 BRAIN.runconnectome = function () {

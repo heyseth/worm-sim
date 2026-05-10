@@ -98,6 +98,8 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 
 		var numSegments = this.nodes.length - 1;
 
+		this.segmentBends = [];
+
 		// 1. Apply bending forces from muscles
 		for (var i = 1; i < numSegments; i++) {
 			var prevNode = this.nodes[i - 1];
@@ -117,6 +119,9 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 			var v1y = currNode.y - prevNode.y;
 			var v2x = nextNode.x - currNode.x;
 			var v2y = nextNode.y - currNode.y;
+
+			// Calculate physical bend for proprioception
+			this.segmentBends[i] = v1x * v2y - v1y * v2x;
 
 			// We apply a small perpendicular force to bend the joint
 			var len1 = Math.hypot(v1x, v1y) || 1;
