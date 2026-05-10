@@ -262,6 +262,11 @@ BRAIN.stimulateHungerNeurons = true;
 BRAIN.stimulateNoseTouchNeurons = false;
 BRAIN.stimulateFoodSenseNeurons = false;
 
+BRAIN.segmentActivations = [];
+for (var i = 0; i < 17; i++) {
+	BRAIN.segmentActivations.push({ left: 0, right: 0 });
+}
+
 // we want each simualtion to be slightly different
 BRAIN.randExcite = function () {
 	for (var i = 0; i < 40; i++) {
@@ -694,7 +699,6 @@ BRAIN.update = function () {
 		BRAIN.dendriteAccumulate('RIMR');
 		BRAIN.dendriteAccumulate('RICL');
 		BRAIN.dendriteAccumulate('RICR');
-		BRAIN.runconnectome();
 	}
 	if (BRAIN.stimulateNoseTouchNeurons) {
 		BRAIN.dendriteAccumulate('FLPR');
@@ -707,32 +711,30 @@ BRAIN.update = function () {
 		BRAIN.dendriteAccumulate('OLQDR');
 		BRAIN.dendriteAccumulate('OLQVR');
 		BRAIN.dendriteAccumulate('OLQVL');
-		BRAIN.runconnectome();
 	}
-	if (BRAIN.foodGradient > 0.001) {
-		BRAIN.dendriteAccumulate('ASEL'); // Getting closer
-		BRAIN.runconnectome();
-	} else if (BRAIN.foodGradient < -0.001) {
-		BRAIN.dendriteAccumulate('ASER'); // Getting farther away
-		BRAIN.runconnectome();
+	
+	// Chemotaxis: ASEL (closer) / ASER (farther)
+	// We use a stronger stimulation here to ensure it overcomes the CPG
+	if (BRAIN.foodGradient > 0.0001) {
+		for(var i=0; i<5; i++) BRAIN.dendriteAccumulate('ASEL'); 
+	} else if (BRAIN.foodGradient < -0.0001) {
+		for(var i=0; i<5; i++) BRAIN.dendriteAccumulate('ASER');
 	}
 
 	// Proprioceptive Feedback Loop: Body curvature stimulates adjacent segments
 	if (typeof chain !== 'undefined' && chain.segmentBends) {
 		for (var i = 1; i < chain.segmentBends.length; i++) {
 			var bend = chain.segmentBends[i];
-			// Map node index to muscle segment (07 to 23)
-			// Nodes are ~25, muscles are 17. Rough mapping:
 			var ratio = 17 / chain.segmentBends.length;
 			var muscleNum = Math.floor((i + 1) * ratio) + 7;
 			
 			if (muscleNum <= 23) {
 				var numStr = muscleNum < 10 ? '0' + muscleNum : '' + muscleNum;
-				// If bent right (bend > 2), stretch receptors on left fire, causing right muscles to contract in next segment to pass wave
-				if (bend < -2) {
+				// If bent right (bend > 0), stretch receptors on left fire, causing right muscles to contract in next segment to pass wave
+				if (bend < -1) {
 					BRAIN.dendriteAccumulate('MDL' + numStr);
 					BRAIN.dendriteAccumulate('MVL' + numStr);
-				} else if (bend > 2) {
+				} else if (bend > 1) {
 					BRAIN.dendriteAccumulate('MDR' + numStr);
 					BRAIN.dendriteAccumulate('MVR' + numStr);
 				}
@@ -741,13 +743,18 @@ BRAIN.update = function () {
 	}
 	
 	// Central Pattern Generator (CPG) for the head to induce natural wriggling
-	var time = Date.now() / 300;
+	var time = Date.now() / 350;
+	var cpgStr = 4; // Strength of CPG stimulation
 	if (Math.sin(time) > 0) {
-		BRAIN.dendriteAccumulate('MDL07');
-		BRAIN.dendriteAccumulate('MVL07');
+		for(var i=0; i<cpgStr; i++) {
+			BRAIN.dendriteAccumulate('MDL07');
+			BRAIN.dendriteAccumulate('MVL07');
+		}
 	} else {
-		BRAIN.dendriteAccumulate('MDR07');
-		BRAIN.dendriteAccumulate('MVR07');
+		for(var i=0; i<cpgStr; i++) {
+			BRAIN.dendriteAccumulate('MDR07');
+			BRAIN.dendriteAccumulate('MVR07');
+		}
 	}
 
 	BRAIN.runconnectome();

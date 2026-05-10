@@ -20,14 +20,9 @@ document.getElementById('centerButton').onclick = function () {
 	target.y = window.innerHeight / 2;
 };
 
-var facingDir = 0;
-var targetDir = 0;
-var speed = 0;
-var targetSpeed = 0;
-var speedChangeInterval = 0;
 var food = [];
 var collisionTimer = 0;
-var foodSenseTimer = 0;
+var lastSmell = 0;
 
 function toggleConnectome() {
 	document.getElementById('nodeHolder').style.opacity =
@@ -50,12 +45,11 @@ for (var ps in BRAIN.connectome) {
 	document.getElementById('nodeHolder').appendChild(newBox);
 }
 
+var frameCount = 0;
 /**
- * Updates the brain of the worm.
- * This function updates the brain's state, updates the visual representation of the post-synaptic connections.
+ * Updates the visual representation of the brain.
  */
-function updateBrain() {
-	BRAIN.update();
+function updateBrainVisuals() {
 	for (var postSynaptic in BRAIN.connectome) {
 		var psBox = document.getElementById(postSynaptic);
 		var neuron = BRAIN.postSynaptic[postSynaptic][BRAIN.thisState];
@@ -66,7 +60,6 @@ function updateBrain() {
 }
 
 BRAIN.randExcite();
-setInterval(updateBrain, 500);
 
 //http://jsfiddle.net/user/ARTsinn/fiddles/
 
@@ -90,11 +83,11 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 	}
 
 	this.update = function (segmentActivations) {
-		var dt = 0.5; // Timestep
-		var k_spring = 0.5; // Spring constant for keeping segment length
-		var k_bend = 0.05; // How much muscle activation bends the joint
-		var k_fwd_friction = 0.05; // Low friction moving forward
-		var k_lat_friction = 0.8; // High friction moving sideways
+		var dt = 0.2; // Smaller timestep for stability
+		var k_spring = 0.4; // Slightly softer springs
+		var k_bend = 0.15; // Increased bending strength
+		var k_fwd_friction = 0.02; // Even lower forward friction
+		var k_lat_friction = 0.7; // High lateral friction
 
 		var numSegments = this.nodes.length - 1;
 
@@ -325,6 +318,15 @@ function update() {
 	
 	// Hunger is always true in this simulation unless we eat, but let's keep it simple
 	BRAIN.stimulateHungerNeurons = true;
+
+	// Update Brain (Neural Loop) at 60fps
+	BRAIN.update();
+
+	// Update Brain Visuals every 10 frames to save performance
+	if (frameCount % 10 === 0) {
+		updateBrainVisuals();
+	}
+	frameCount++;
 
 	// Update PhysicsWorm
 	// run multiple smaller physics steps per frame for stability
