@@ -291,41 +291,32 @@ function update() {
 		collisionTimer = 120;
 	}
 
-	// Check if the worm is near food
+	// Calculate continuous smell gradient (Chemotaxis)
+	var currentSmell = 0;
 	for (var i = 0; i < food.length; i++) {
-		if (
-			Math.hypot(
-				Math.round(target.x) - food[i].x,
-				Math.round(target.y) - food[i].y,
-			) <= 50
-		) {
-			// simulate food sense if food nearby
-			foodSenseTimer = 120;
-
-			if (
-				Math.hypot(
-					Math.round(target.x) - food[i].x,
-					Math.round(target.y) - food[i].y,
-				) <= 20
-			) {
-				// eat food if close enough
-				food.splice(i, 1);
-			}
+		var dist = Math.hypot(
+			target.x - food[i].x,
+			target.y - food[i].y,
+		);
+		
+		if (dist <= 20) {
+			// Eat food if close enough
+			food.splice(i, 1);
+			i--;
+			continue;
 		}
+		
+		currentSmell += 100 / (dist * dist + 1); // Avoid division by zero
 	}
+
+	BRAIN.foodGradient = currentSmell - lastSmell;
+	lastSmell = currentSmell;
 
 	if (collisionTimer > 0) {
 		BRAIN.stimulateNoseTouchNeurons = true;
 		collisionTimer--;
 	} else {
 		BRAIN.stimulateNoseTouchNeurons = false;
-	}
-
-	if (foodSenseTimer > 0) {
-		BRAIN.stimulateFoodSenseNeurons = true;
-		foodSenseTimer--;
-	} else {
-		BRAIN.stimulateFoodSenseNeurons = false;
 	}
 	
 	// Hunger is always true in this simulation unless we eat, but let's keep it simple
@@ -375,4 +366,6 @@ function draw() {
 setInterval(function () {
 	update();
 	draw();
+}, 1e3 / 60);
+);
 }, 1e3 / 60);

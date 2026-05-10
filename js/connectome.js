@@ -709,15 +709,11 @@ BRAIN.update = function () {
 		BRAIN.dendriteAccumulate('OLQVL');
 		BRAIN.runconnectome();
 	}
-	if (BRAIN.stimulateFoodSenseNeurons) {
-		BRAIN.dendriteAccumulate('ADFL');
-		BRAIN.dendriteAccumulate('ADFR');
-		BRAIN.dendriteAccumulate('ASGR');
-		BRAIN.dendriteAccumulate('ASGL');
-		BRAIN.dendriteAccumulate('ASIL');
-		BRAIN.dendriteAccumulate('ASIR');
-		BRAIN.dendriteAccumulate('ASJR');
-		BRAIN.dendriteAccumulate('ASJL');
+	if (BRAIN.foodGradient > 0.001) {
+		BRAIN.dendriteAccumulate('ASEL'); // Getting closer
+		BRAIN.runconnectome();
+	} else if (BRAIN.foodGradient < -0.001) {
+		BRAIN.dendriteAccumulate('ASER'); // Getting farther away
 		BRAIN.runconnectome();
 	}
 
