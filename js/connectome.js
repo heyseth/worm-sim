@@ -759,20 +759,30 @@ BRAIN.fireNeuron = function (fneuron) {
 };
 
 BRAIN.motorcontrol = function () {
-	/* accumulate left and right muscles and the accumulated values are
-       used to move the left and right motors of the robot */
-
+	/* accumulate left and right muscles per segment for undulatory locomotion */
 	BRAIN.accumleft = 0;
 	BRAIN.accumright = 0;
 
+	for (var i = 0; i < 17; i++) {
+		BRAIN.segmentActivations[i] = { left: 0, right: 0 };
+	}
+
 	for (var m = 0; m < BRAIN.muscleList.length; m++) {
 		var muscleName = BRAIN.muscleList[m];
+		var segmentNum = parseInt(muscleName.substring(3), 10);
+		if (isNaN(segmentNum)) continue;
+		var segmentIdx = segmentNum - 7;
+		if (segmentIdx < 0 || segmentIdx > 16) continue;
+
+		var val = BRAIN.postSynaptic[muscleName][BRAIN.nextState];
 
 		if (BRAIN.mLeft.indexOf(muscleName) != -1) {
-			BRAIN.accumleft += BRAIN.postSynaptic[muscleName][BRAIN.nextState];
+			BRAIN.accumleft += val;
+			BRAIN.segmentActivations[segmentIdx].left += val;
 			BRAIN.postSynaptic[muscleName][BRAIN.nextState] = 0;
 		} else if (BRAIN.mRight.indexOf(muscleName) != -1) {
-			BRAIN.accumright += BRAIN.postSynaptic[muscleName][BRAIN.nextState];
+			BRAIN.accumright += val;
+			BRAIN.segmentActivations[segmentIdx].right += val;
 			BRAIN.postSynaptic[muscleName][BRAIN.nextState] = 0;
 		}
 	}

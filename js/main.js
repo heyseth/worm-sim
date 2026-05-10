@@ -52,8 +52,7 @@ for (var ps in BRAIN.connectome) {
 
 /**
  * Updates the brain of the worm.
- * This function updates the brain's state, updates the visual representation of the post-synaptic connections,
- * calculates the new direction and speed of the worm based on the accumulated left and right inputs.
+ * This function updates the brain's state, updates the visual representation of the post-synaptic connections.
  */
 function updateBrain() {
 	BRAIN.update();
@@ -64,112 +63,139 @@ function updateBrain() {
 		psBox.style.backgroundColor = '#55FF55';
 		psBox.style.opacity = Math.min(1, neuron / 50);
 	}
-	let scalingFactor = 20;
-	let newDir = (BRAIN.accumleft - BRAIN.accumright) / scalingFactor;
-	targetDir = facingDir + newDir * Math.PI;
-	//targetDir = facingDir + calculateFinalDirection(BRAIN.accumleft/200, BRAIN.accumright/200);
-	targetSpeed =
-		(Math.abs(BRAIN.accumleft) + Math.abs(BRAIN.accumright)) /
-		(scalingFactor * 5);
-	speedChangeInterval = (targetSpeed - speed) / (scalingFactor * 1.5);
 }
 
 BRAIN.randExcite();
 setInterval(updateBrain, 500);
 
-function calculateFinalDirection(leftPercentage, rightPercentage) {
-	const maxTurnAngle = Math.PI / 2; // 90 degrees in radians
-	const leftTurnAngle = leftPercentage * maxTurnAngle;
-	const rightTurnAngle = rightPercentage * maxTurnAngle;
-
-	const finalDirection = rightTurnAngle - leftTurnAngle;
-
-	return finalDirection;
-}
-
 //http://jsfiddle.net/user/ARTsinn/fiddles/
 
 /**
- * Represents an Inverse Kinematics (IK) segment.
- * @constructor
- * @param {number} size - The size of the segment.
- * @param {Object} head - The position of the segment's head.
- * @param {number} head.x - The x-coordinate of the head.
- * @param {number} head.y - The y-coordinate of the head.
- * @param {Object} tail - The position of the segment's tail.
- * @param {number} tail.x - The x-coordinate of the tail.
- * @param {number} tail.y - The y-coordinate of the tail.
+ * Represents a physics-based worm model with anisotropic friction and muscle bending.
  */
-var IKSegment = function (size, head, tail) {
-	this.size = size;
-	this.head = head || {
-		x: 0.0,
-		y: 0.0,
-	};
-	this.tail = tail || {
-		x: this.head.x + size,
-		y: this.head.y + size,
-	};
+var PhysicsWorm = function (numNodes, segmentLength) {
+	this.nodes = [];
+	this.segmentLength = segmentLength;
 
-	this.update = function () {
-		// Position derivitives
-		var dx = this.head.x - this.tail.x;
-		var dy = this.head.y - this.tail.y;
+	// Initialize nodes in a straight line
+	var startX = window.innerWidth / 2;
+	var startY = window.innerHeight / 2;
+	for (var i = 0; i < numNodes; i++) {
+		this.nodes.push({
+			x: startX - i * segmentLength,
+			y: startY,
+			vx: 0,
+			vy: 0,
+		});
+	}
 
-		// Distance between head and tail
-		var dist = Math.sqrt(dx * dx + dy * dy);
-		// Force of the spring (Hook's Law)
-		var force = 0.5 - (this.size / dist) * 0.5;
-		var strength = 0.998; // No springiness
+	this.update = function (segmentActivations) {
+		var dt = 0.5; // Timestep
+		var k_spring = 0.5; // Spring constant for keeping segment length
+		var k_bend = 0.05; // How much muscle activation bends the joint
+		var k_fwd_friction = 0.05; // Low friction moving forward
+		var k_lat_friction = 0.8; // High friction moving sideways
 
-		// Dampening
-		force *= 0.99;
+		var numSegments = this.nodes.length - 1;
 
-		// Force vectors
-		var fx = force * dx;
-		var fy = force * dy;
+		// 1. Apply bending forces from muscles
+		for (var i = 1; i < numSegments; i++) {
+			var prevNode = this.nodes[i - 1];
+			var currNode = this.nodes[i];
+			var nextNode = this.nodes[i + 1];
 
-		// Update head and tail positions
-		this.tail.x += fx * strength * 2.0;
-		this.tail.y += fy * strength * 2.0;
-		this.head.x -= fx * (1.0 - strength) * 2.0;
-		this.head.y -= fy * (1.0 - strength) * 2.0;
-	};
-};
+			// Muscle activation for this segment (map 17 activations to however many nodes we have)
+			var activationIdx = Math.floor((i / numSegments) * segmentActivations.length);
+			if (activationIdx >= segmentActivations.length) activationIdx = segmentActivations.length - 1;
+			var activation = segmentActivations[activationIdx];
 
-/**
- * Represents an inverse kinematics chain. It is a collection of IK segments.
- * @constructor
- * @param {number} size - The number of links in the chain.
- * @param {number} interval - The interval between each link.
- */
-var IKChain = function (size, interval) {
-	this.links = new Array(size);
+			// Desired bend angle based on muscle differences
+			var targetBend = (activation.right - activation.left) * k_bend;
 
-	this.update = function (target) {
-		var link = this.links[0];
+			// Current vectors
+			var v1x = currNode.x - prevNode.x;
+			var v1y = currNode.y - prevNode.y;
+			var v2x = nextNode.x - currNode.x;
+			var v2y = nextNode.y - currNode.y;
 
-		link.head.x = target.x;
-		link.head.y = target.y;
+			// We apply a small perpendicular force to bend the joint
+			var len1 = Math.hypot(v1x, v1y) || 1;
+			var len2 = Math.hypot(v2x, v2y) || 1;
+			var p1x = -v1y / len1; // perpendicular to v1
+			var p1y = v1x / len1;
+			var p2x = -v2y / len2; // perpendicular to v2
+			var p2y = v2x / len2;
 
-		for (var i = 0, n = this.links.length; i < n; ++i) {
-			this.links[i].update();
+			var force = targetBend;
+
+			// Apply forces
+			prevNode.vx += p1x * force;
+			prevNode.vy += p1y * force;
+			currNode.vx -= (p1x + p2x) * force;
+			currNode.vy -= (p1y + p2y) * force;
+			nextNode.vx += p2x * force;
+			nextNode.vy += p2y * force;
+		}
+
+		// 2. Maintain segment lengths (Spring forces)
+		for (var i = 0; i < numSegments; i++) {
+			var n1 = this.nodes[i];
+			var n2 = this.nodes[i + 1];
+			var dx = n2.x - n1.x;
+			var dy = n2.y - n1.y;
+			var dist = Math.hypot(dx, dy);
+			if (dist > 0) {
+				var diff = dist - this.segmentLength;
+				var fx = (dx / dist) * diff * k_spring;
+				var fy = (dy / dist) * diff * k_spring;
+				n1.vx += fx;
+				n1.vy += fy;
+				n2.vx -= fx;
+				n2.vy -= fy;
+			}
+		}
+
+		// 3. Anisotropic friction and position update
+		for (var i = 0; i < this.nodes.length; i++) {
+			var node = this.nodes[i];
+
+			// Determine local forward direction
+			var fwdX = 1, fwdY = 0;
+			if (i < numSegments) {
+				var n2 = this.nodes[i + 1];
+				var dx = node.x - n2.x;
+				var dy = node.y - n2.y;
+				var d = Math.hypot(dx, dy) || 1;
+				fwdX = dx / d;
+				fwdY = dy / d;
+			} else {
+				var n0 = this.nodes[i - 1];
+				var dx = n0.x - node.x;
+				var dy = n0.y - node.y;
+				var d = Math.hypot(dx, dy) || 1;
+				fwdX = dx / d;
+				fwdY = dy / d;
+			}
+			var latX = -fwdY;
+			var latY = fwdX;
+
+			// Decompose velocity
+			var vFwd = node.vx * fwdX + node.vy * fwdY;
+			var vLat = node.vx * latX + node.vy * latY;
+
+			// Apply friction
+			vFwd *= (1 - k_fwd_friction);
+			vLat *= (1 - k_lat_friction);
+
+			// Recompose velocity
+			node.vx = vFwd * fwdX + vLat * latX;
+			node.vy = vFwd * fwdY + vLat * latY;
+
+			// Update position
+			node.x += node.vx * dt;
+			node.y += node.vy * dt;
 		}
 	};
-
-	var point = {
-		x: 0,
-		y: 0,
-	};
-
-	for (var i = 0, n = this.links.length; i < n; ++i) {
-		var link = (this.links[i] = new IKSegment(interval, point));
-		link.head.x = Math.random() * 500;
-		link.head.y = Math.random() * 500;
-		link.tail.x = Math.random() * 500;
-		link.tail.y = Math.random() * 500;
-		point = link.tail;
-	}
 };
 
 /* Test */
@@ -240,54 +266,27 @@ function drawFood() {
 	}
 }
 
-var target = {
-	x: window.innerWidth / 2,
-	y: window.innerHeight / 2,
-};
-
-var chain = new IKChain(200, 1);
+var chain = new PhysicsWorm(25, 8); // 25 nodes, 8px each
 
 function update() {
-	speed += speedChangeInterval;
-
-	var facingMinusTarget = facingDir - targetDir;
-	var angleDiff = facingMinusTarget;
-
-	// Calculate the smallest angle difference between the facing direction and the target direction
-	if (Math.abs(facingMinusTarget) > 180) {
-		if (facingDir > targetDir) {
-			angleDiff = -1 * (360 - facingDir + targetDir);
-		} else {
-			angleDiff = 360 - targetDir + facingDir;
-		}
-	}
-
-	// Rotate the worm towards the target direction
-	if (angleDiff > 0) {
-		facingDir -= 0.1;
-	} else if (angleDiff < 0) {
-		facingDir += 0.1;
-	}
-
-	// Resolve the x and y components of the speed vector and update the worm's position
-	target.x += Math.cos(facingDir) * speed;
-	target.y -= Math.sin(facingDir) * speed;
+	var headX = chain.nodes[0].x;
+	var headY = chain.nodes[0].y;
 
 	// Prevent x from going off the screen
-	if (target.x < 0) {
-		target.x = 0;
+	if (headX < 0) {
+		chain.nodes[0].x = 0;
 		collisionTimer = 120;
-	} else if (target.x > window.innerWidth) {
-		target.x = window.innerWidth;
+	} else if (headX > window.innerWidth) {
+		chain.nodes[0].x = window.innerWidth;
 		collisionTimer = 120;
 	}
 
 	// Prevent y from going off the screen
-	if (target.y < 0) {
-		target.y = 0;
+	if (headY < 0) {
+		chain.nodes[0].y = 0;
 		collisionTimer = 120;
-	} else if (target.y > window.innerHeight) {
-		target.y = window.innerHeight;
+	} else if (headY > window.innerHeight) {
+		chain.nodes[0].y = window.innerHeight;
 		collisionTimer = 120;
 	}
 
@@ -295,8 +294,8 @@ function update() {
 	var currentSmell = 0;
 	for (var i = 0; i < food.length; i++) {
 		var dist = Math.hypot(
-			target.x - food[i].x,
-			target.y - food[i].y,
+			headX - food[i].x,
+			headY - food[i].y,
 		);
 		
 		if (dist <= 20) {
@@ -322,8 +321,11 @@ function update() {
 	// Hunger is always true in this simulation unless we eat, but let's keep it simple
 	BRAIN.stimulateHungerNeurons = true;
 
-	// Update IK chain
-	chain.update(target);
+	// Update PhysicsWorm
+	// run multiple smaller physics steps per frame for stability
+	for (var step = 0; step < 3; step++) {
+		chain.update(BRAIN.segmentActivations);
+	}
 }
 
 /**
@@ -333,25 +335,15 @@ function draw() {
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
 	drawFood();
 
-	circle(ctx, target.x, target.y, 5, 'rgba(255,255,255,0.1)');
-
-	var link = chain.links[0];
-	var p1 = link.head,
-		p2 = link.tail;
-
 	ctx.beginPath();
-	ctx.moveTo(p1.x, p1.y);
+	ctx.moveTo(chain.nodes[0].x, chain.nodes[0].y);
 	ctx.strokeStyle = 'white';
-	ctx.lineWidth = 20;
+	ctx.lineWidth = 15;
 	ctx.lineJoin = 'round';
 	ctx.lineCap = 'round';
 
-	for (var i = 0, n = chain.links.length; i < n; ++i) {
-		link = chain.links[i];
-		p1 = link.head;
-		p2 = link.tail;
-		ctx.lineTo(p1.x, p1.y);
-		ctx.lineTo(p2.x, p2.y);
+	for (var i = 1, n = chain.nodes.length; i < n; ++i) {
+		ctx.lineTo(chain.nodes[i].x, chain.nodes[i].y);
 	}
 
 	ctx.stroke();
@@ -367,5 +359,39 @@ setInterval(function () {
 	update();
 	draw();
 }, 1e3 / 60);
-);
+step = 0; step < 3; step++) {
+		chain.update(BRAIN.segmentActivations);
+	}
+}
+
+/**
+ * Draws the worm simulation on the canvas.
+ */
+function draw() {
+	ctx.clearRect(0, 0, canvas.width, canvas.height);
+	drawFood();
+
+	ctx.beginPath();
+	ctx.moveTo(chain.nodes[0].x, chain.nodes[0].y);
+	ctx.strokeStyle = 'white';
+	ctx.lineWidth = 15;
+	ctx.lineJoin = 'round';
+	ctx.lineCap = 'round';
+
+	for (var i = 1, n = chain.nodes.length; i < n; ++i) {
+		ctx.lineTo(chain.nodes[i].x, chain.nodes[i].y);
+	}
+
+	ctx.stroke();
+}
+
+(function resize() {
+	canvas.width = window.innerWidth;
+	canvas.height = window.innerHeight;
+	window.onresize = resize;
+})();
+
+setInterval(function () {
+	update();
+	draw();
 }, 1e3 / 60);
