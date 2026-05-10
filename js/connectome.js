@@ -747,6 +747,11 @@ BRAIN.runconnectome = function () {
 	var temp = BRAIN.thisState;
 	BRAIN.thisState = BRAIN.nextState;
 	BRAIN.nextState = temp;
+	
+	// Apply decay (Leakiness) to the next integration step
+	for (var ps in BRAIN.postSynaptic) {
+		BRAIN.postSynaptic[ps][BRAIN.nextState] *= 0.9; 
+	}
 };
 
 BRAIN.fireNeuron = function (fneuron) {

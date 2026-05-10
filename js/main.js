@@ -26,6 +26,8 @@ var speed = 0;
 var targetSpeed = 0;
 var speedChangeInterval = 0;
 var food = [];
+var collisionTimer = 0;
+var foodSenseTimer = 0;
 
 function toggleConnectome() {
 	document.getElementById('nodeHolder').style.opacity =
@@ -274,19 +276,19 @@ function update() {
 	// Prevent x from going off the screen
 	if (target.x < 0) {
 		target.x = 0;
-		BRAIN.stimulateNoseTouchNeurons = true;
+		collisionTimer = 120;
 	} else if (target.x > window.innerWidth) {
 		target.x = window.innerWidth;
-		BRAIN.stimulateNoseTouchNeurons = true;
+		collisionTimer = 120;
 	}
 
 	// Prevent y from going off the screen
 	if (target.y < 0) {
 		target.y = 0;
-		BRAIN.stimulateNoseTouchNeurons = true;
+		collisionTimer = 120;
 	} else if (target.y > window.innerHeight) {
 		target.y = window.innerHeight;
-		BRAIN.stimulateNoseTouchNeurons = true;
+		collisionTimer = 120;
 	}
 
 	// Check if the worm is near food
@@ -298,7 +300,7 @@ function update() {
 			) <= 50
 		) {
 			// simulate food sense if food nearby
-			BRAIN.stimulateFoodSenseNeurons = true;
+			foodSenseTimer = 120;
 
 			if (
 				Math.hypot(
@@ -312,12 +314,22 @@ function update() {
 		}
 	}
 
-	// Reset neuron stimulation after 2 seconds
-	setTimeout(function () {
-		BRAIN.stimulateHungerNeurons = true;
+	if (collisionTimer > 0) {
+		BRAIN.stimulateNoseTouchNeurons = true;
+		collisionTimer--;
+	} else {
 		BRAIN.stimulateNoseTouchNeurons = false;
+	}
+
+	if (foodSenseTimer > 0) {
+		BRAIN.stimulateFoodSenseNeurons = true;
+		foodSenseTimer--;
+	} else {
 		BRAIN.stimulateFoodSenseNeurons = false;
-	}, 2000);
+	}
+	
+	// Hunger is always true in this simulation unless we eat, but let's keep it simple
+	BRAIN.stimulateHungerNeurons = true;
 
 	// Update IK chain
 	chain.update(target);
