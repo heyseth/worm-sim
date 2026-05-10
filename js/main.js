@@ -364,39 +364,3 @@ setInterval(function () {
 	update();
 	draw();
 }, 1e3 / 60);
-step = 0; step < 3; step++) {
-		chain.update(BRAIN.segmentActivations);
-	}
-}
-
-/**
- * Draws the worm simulation on the canvas.
- */
-function draw() {
-	ctx.clearRect(0, 0, canvas.width, canvas.height);
-	drawFood();
-
-	ctx.beginPath();
-	ctx.moveTo(chain.nodes[0].x, chain.nodes[0].y);
-	ctx.strokeStyle = 'white';
-	ctx.lineWidth = 15;
-	ctx.lineJoin = 'round';
-	ctx.lineCap = 'round';
-
-	for (var i = 1, n = chain.nodes.length; i < n; ++i) {
-		ctx.lineTo(chain.nodes[i].x, chain.nodes[i].y);
-	}
-
-	ctx.stroke();
-}
-
-(function resize() {
-	canvas.width = window.innerWidth;
-	canvas.height = window.innerHeight;
-	window.onresize = resize;
-})();
-
-setInterval(function () {
-	update();
-	draw();
-}, 1e3 / 60);
