@@ -16,8 +16,14 @@ document.getElementById('clearButton').onclick = function () {
 };
 
 document.getElementById('centerButton').onclick = function () {
-	target.x = window.innerWidth / 2;
-	target.y = window.innerHeight / 2;
+	var startX = window.innerWidth / 2;
+	var startY = window.innerHeight / 2;
+	for (var i = 0; i < chain.nodes.length; i++) {
+		chain.nodes[i].x = startX - i * chain.segmentLength;
+		chain.nodes[i].y = startY + (Math.random() - 0.5) * 4;
+		chain.nodes[i].vx = 0;
+		chain.nodes[i].vy = 0;
+	}
 };
 
 var food = [];
@@ -70,41 +76,42 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 	this.nodes = [];
 	this.segmentLength = segmentLength;
 
-	// Initialize nodes in a straight line
+	// Initialize nodes in a straight line with a tiny bit of noise
 	var startX = window.innerWidth / 2;
 	var startY = window.innerHeight / 2;
 	for (var i = 0; i < numNodes; i++) {
 		this.nodes.push({
 			x: startX - i * segmentLength,
-			y: startY,
+			y: startY + (Math.random() - 0.5) * 4,
 			vx: 0,
 			vy: 0,
 		});
 	}
 
 	this.update = function (segmentActivations) {
-		var dt = 0.2; // Smaller timestep for stability
-		var k_spring = 0.4; // Slightly softer springs
-		var k_bend = 0.15; // Increased bending strength
-		var k_fwd_friction = 0.02; // Even lower forward friction
-		var k_lat_friction = 0.7; // High lateral friction
+		var dt = 0.15; // Smaller timestep for higher precision/stability
+		var k_spring = 0.6; // Softer springs to avoid oscillation
+		var k_bend = 0.25; 
+		var k_stiffness = 0.1; 
+		var k_repel = 1.0; 
+		var k_fwd_friction = 0.01;
+		var k_lat_friction = 0.4;
 
 		var numSegments = this.nodes.length - 1;
 
 		this.segmentBends = [];
 
-		// 1. Apply bending forces from muscles
+		// 1. Apply bending forces from muscles + Angular Stiffness
 		for (var i = 1; i < numSegments; i++) {
 			var prevNode = this.nodes[i - 1];
 			var currNode = this.nodes[i];
 			var nextNode = this.nodes[i + 1];
 
-			// Muscle activation for this segment (map 17 activations to however many nodes we have)
 			var activationIdx = Math.floor((i / numSegments) * segmentActivations.length);
 			if (activationIdx >= segmentActivations.length) activationIdx = segmentActivations.length - 1;
 			var activation = segmentActivations[activationIdx];
 
-			// Desired bend angle based on muscle differences
+			// Muscle torque
 			var targetBend = (activation.right - activation.left) * k_bend;
 
 			// Current vectors
@@ -112,21 +119,22 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 			var v1y = currNode.y - prevNode.y;
 			var v2x = nextNode.x - currNode.x;
 			var v2y = nextNode.y - currNode.y;
-
-			// Calculate physical bend for proprioception
-			this.segmentBends[i] = v1x * v2y - v1y * v2x;
-
-			// We apply a small perpendicular force to bend the joint
+			
 			var len1 = Math.hypot(v1x, v1y) || 1;
 			var len2 = Math.hypot(v2x, v2y) || 1;
-			var p1x = -v1y / len1; // perpendicular to v1
+
+			// Normalize cross product to get sine of angle (prevents quadratic force growth)
+			var currentBend = (v1x * v2y - v1y * v2x) / (len1 * len2);
+			this.segmentBends[i] = currentBend;
+
+			// Combined force: muscle torque - stiffness (restoring force)
+			var force = targetBend - (currentBend * k_stiffness * 20); // Scaled back up after normalization
+
+			var p1x = -v1y / len1; 
 			var p1y = v1x / len1;
-			var p2x = -v2y / len2; // perpendicular to v2
+			var p2x = -v2y / len2; 
 			var p2y = v2x / len2;
 
-			var force = targetBend;
-
-			// Apply forces
 			prevNode.vx += p1x * force;
 			prevNode.vy += p1y * force;
 			currNode.vx -= (p1x + p2x) * force;
@@ -135,7 +143,29 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 			nextNode.vy += p2y * force;
 		}
 
-		// 2. Maintain segment lengths (Spring forces)
+		// 2. Self-Repulsion (Prevent overlap/bunching)
+		for (var i = 0; i < this.nodes.length; i++) {
+			for (var j = i + 2; j < this.nodes.length; j++) {
+				var n1 = this.nodes[i];
+				var n2 = this.nodes[j];
+				var dx = n2.x - n1.x;
+				var dy = n2.y - n1.y;
+				var distSq = dx * dx + dy * dy;
+				var minDist = 15;
+				if (distSq < minDist * minDist) {
+					var dist = Math.sqrt(distSq) || 1;
+					var f = (minDist - dist) * k_repel;
+					var fx = (dx / dist) * f;
+					var fy = (dy / dist) * f;
+					n1.vx -= fx;
+					n1.vy -= fy;
+					n2.vx += fx;
+					n2.vy += fy;
+				}
+			}
+		}
+
+		// 3. Distance Constraints
 		for (var i = 0; i < numSegments; i++) {
 			var n1 = this.nodes[i];
 			var n2 = this.nodes[i + 1];
@@ -153,11 +183,9 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 			}
 		}
 
-		// 3. Anisotropic friction and position update
+		// 4. Friction and Integration
 		for (var i = 0; i < this.nodes.length; i++) {
 			var node = this.nodes[i];
-
-			// Determine local forward direction
 			var fwdX = 1, fwdY = 0;
 			if (i < numSegments) {
 				var n2 = this.nodes[i + 1];
@@ -177,19 +205,15 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 			var latX = -fwdY;
 			var latY = fwdX;
 
-			// Decompose velocity
 			var vFwd = node.vx * fwdX + node.vy * fwdY;
 			var vLat = node.vx * latX + node.vy * latY;
 
-			// Apply friction
 			vFwd *= (1 - k_fwd_friction);
 			vLat *= (1 - k_lat_friction);
 
-			// Recompose velocity
 			node.vx = vFwd * fwdX + vLat * latX;
 			node.vy = vFwd * fwdY + vLat * latY;
 
-			// Update position
 			node.x += node.vx * dt;
 			node.y += node.vy * dt;
 		}
@@ -264,7 +288,7 @@ function drawFood() {
 	}
 }
 
-var chain = new PhysicsWorm(25, 8); // 25 nodes, 8px each
+var chain = new PhysicsWorm(35, 6); // More segments, shorter length for smoother look
 
 function update() {
 	var headX = chain.nodes[0].x;
@@ -316,7 +340,6 @@ function update() {
 		BRAIN.stimulateNoseTouchNeurons = false;
 	}
 	
-	// Hunger is always true in this simulation unless we eat, but let's keep it simple
 	BRAIN.stimulateHungerNeurons = true;
 
 	// Update Brain (Neural Loop) at 60fps
@@ -329,31 +352,66 @@ function update() {
 	frameCount++;
 
 	// Update PhysicsWorm
-	// run multiple smaller physics steps per frame for stability
-	for (var step = 0; step < 3; step++) {
+	for (var step = 0; step < 4; step++) {
 		chain.update(BRAIN.segmentActivations);
 	}
 }
 
 /**
- * Draws the worm simulation on the canvas.
+ * Draws the worm simulation with micrograph realism.
  */
 function draw() {
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
 	drawFood();
 
-	ctx.beginPath();
-	ctx.moveTo(chain.nodes[0].x, chain.nodes[0].y);
-	ctx.strokeStyle = 'white';
-	ctx.lineWidth = 15;
-	ctx.lineJoin = 'round';
-	ctx.lineCap = 'round';
+	var numNodes = chain.nodes.length;
+	
+	// Pass 1: Translucent Body Flesh
+	for (var i = numNodes - 2; i >= 0; i--) {
+		var p1 = chain.nodes[i];
+		var p2 = chain.nodes[i + 1];
 
-	for (var i = 1, n = chain.nodes.length; i < n; ++i) {
-		ctx.lineTo(chain.nodes[i].x, chain.nodes[i].y);
+		var progress = i / numNodes;
+		// Micrograph taper: Rounded head, fat middle, extremely sharp needle tail
+		var thickness = 28 * Math.pow(Math.sin(Math.PI * Math.pow(progress, 0.7)), 0.5);
+		if (progress > 0.9) thickness *= (1 - (progress - 0.9) * 10); // Sharper tail
+		if (thickness < 1) thickness = 1;
+
+		ctx.beginPath();
+		ctx.moveTo(p1.x, p1.y);
+		ctx.lineTo(p2.x, p2.y);
+		ctx.lineWidth = thickness;
+		// Micrograph grey-tan translucent palette
+		ctx.strokeStyle = 'rgba(235, 235, 230, 0.2)';
+		ctx.lineJoin = 'round';
+		ctx.lineCap = 'round';
+		ctx.stroke();
+		
+		// Pass 2: Inner "Organ" Detail
+		if (i % 2 === 0 && progress > 0.2 && progress < 0.8) {
+			ctx.beginPath();
+			ctx.arc(p1.x, p1.y, thickness * 0.3, 0, Math.PI * 2);
+			ctx.fillStyle = 'rgba(180, 180, 170, 0.15)';
+			ctx.fill();
+		}
 	}
 
-	ctx.stroke();
+	// Pass 3: Edge highlight/outline for definition
+	ctx.globalCompositeOperation = 'source-over';
+	for (var i = numNodes - 2; i >= 0; i--) {
+		var p1 = chain.nodes[i];
+		var p2 = chain.nodes[i + 1];
+		var progress = i / numNodes;
+		var thickness = 28 * Math.pow(Math.sin(Math.PI * Math.pow(progress, 0.7)), 0.5);
+		if (progress > 0.9) thickness *= (1 - (progress - 0.9) * 10);
+		
+		ctx.beginPath();
+		ctx.moveTo(p1.x, p1.y);
+		ctx.lineTo(p2.x, p2.y);
+		ctx.lineWidth = thickness;
+		ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'; // Very subtle shell highlight
+		ctx.stroke();
+	}
 }
 
 (function resize() {
