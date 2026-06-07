@@ -96,6 +96,32 @@ input:checked+.slider:before {
     z-index: 10;
 }
 
+#speedControl {
+    position: absolute;
+    bottom: 56px;
+    left: 10px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.45);
+    color: white;
+    font-family: Arial, sans-serif;
+    font-size: 14px;
+}
+
+#speedLabel {
+    width: 26px;
+    text-align: right;
+}
+
+#speedSlider {
+    width: 140px;
+    accent-color: #55FF55;
+}
+
 #githubButton {
     position: absolute;
     display: inline-block;

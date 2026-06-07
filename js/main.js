@@ -26,6 +26,19 @@ document.getElementById('centerButton').onclick = function () {
 	}
 };
 
+var simulationSpeed = 1;
+var speedSlider = document.getElementById('speedSlider');
+var speedLabel = document.getElementById('speedLabel');
+
+function updateSpeedControl() {
+	simulationSpeed = parseInt(speedSlider.value, 10) || 1;
+	simulationSpeed = Math.max(1, Math.min(10, simulationSpeed));
+	speedLabel.textContent = simulationSpeed + 'x';
+}
+
+speedSlider.addEventListener('input', updateSpeedControl);
+updateSpeedControl();
+
 var food = [];
 var collisionTimer = 0;
 var lastSmell = 0;
@@ -464,6 +477,8 @@ function draw() {
 })();
 
 setInterval(function () {
-	update();
+	for (var i = 0; i < simulationSpeed; i++) {
+		update();
+	}
 	draw();
 }, 1e3 / 60);
