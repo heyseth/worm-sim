@@ -76,26 +76,29 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 	this.nodes = [];
 	this.segmentLength = segmentLength;
 
-	// Initialize nodes in a straight line with a tiny bit of noise
+	// Initialize nodes in a random orientation to break global bias
 	var startX = window.innerWidth / 2;
 	var startY = window.innerHeight / 2;
+	var startAngle = Math.random() * Math.PI * 2;
 	for (var i = 0; i < numNodes; i++) {
 		this.nodes.push({
-			x: startX - i * segmentLength,
-			y: startY + (Math.random() - 0.5) * 4,
+			x: startX + Math.cos(startAngle) * i * segmentLength,
+			y: startY + Math.sin(startAngle) * i * segmentLength,
 			vx: 0,
 			vy: 0,
 		});
 	}
 
 	this.update = function (segmentActivations) {
-		var dt = 0.15; // Smaller timestep for higher precision/stability
-		var k_spring = 0.6; // Softer springs to avoid oscillation
-		var k_bend = 0.25; 
+		var dt = 0.16; // Timestep
+		var k_spring = 0.72; 
+		var k_bend = 1.1; 
+		var k_steer = 1.8;
+		var k_head_steer = 1.1;
 		var k_stiffness = 0.1; 
-		var k_repel = 1.0; 
-		var k_fwd_friction = 0.01;
-		var k_lat_friction = 0.4;
+		var k_repel = 1.2; 
+		var k_fwd_friction = 0.025; 
+		var k_lat_friction = 0.5; 
 
 		var numSegments = this.nodes.length - 1;
 
@@ -111,8 +114,15 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 			if (activationIdx >= segmentActivations.length) activationIdx = segmentActivations.length - 1;
 			var activation = segmentActivations[activationIdx];
 
-			// Muscle torque
-			var targetBend = (activation.right - activation.left) * k_bend;
+			var dorsal = activation.dorsal || 0;
+			var ventral = activation.ventral || 0;
+			var left = activation.left || 0;
+			var right = activation.right || 0;
+
+			var bendSignal = (ventral - dorsal) / (Math.abs(ventral) + Math.abs(dorsal) + 18);
+			var steerSignal = (right - left) / (Math.abs(right) + Math.abs(left) + 8);
+			var anteriorBias = 1 - activationIdx / (segmentActivations.length - 1);
+			var targetBend = bendSignal * k_bend + steerSignal * k_steer * (0.25 + anteriorBias);
 
 			// Current vectors
 			var v1x = currNode.x - prevNode.x;
@@ -123,12 +133,12 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 			var len1 = Math.hypot(v1x, v1y) || 1;
 			var len2 = Math.hypot(v2x, v2y) || 1;
 
-			// Normalize cross product to get sine of angle (prevents quadratic force growth)
+			// Normalize cross product to get sine of angle
 			var currentBend = (v1x * v2y - v1y * v2x) / (len1 * len2);
 			this.segmentBends[i] = currentBend;
 
 			// Combined force: muscle torque - stiffness (restoring force)
-			var force = targetBend - (currentBend * k_stiffness * 20); // Scaled back up after normalization
+			var force = targetBend - (currentBend * k_stiffness * 18); 
 
 			var p1x = -v1y / len1; 
 			var p1y = v1x / len1;
@@ -141,6 +151,14 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 			currNode.vy -= (p1y + p2y) * force;
 			nextNode.vx += p2x * force;
 			nextNode.vy += p2y * force;
+
+			if (i < 6) {
+				var headSteer = steerSignal * k_head_steer * anteriorBias;
+				prevNode.vx += p1x * headSteer;
+				prevNode.vy += p1y * headSteer;
+				currNode.vx += p1x * headSteer * 0.5;
+				currNode.vy += p1y * headSteer * 0.5;
+			}
 		}
 
 		// 2. Self-Repulsion (Prevent overlap/bunching)
@@ -151,7 +169,7 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 				var dx = n2.x - n1.x;
 				var dy = n2.y - n1.y;
 				var distSq = dx * dx + dy * dy;
-				var minDist = 15;
+				var minDist = 12;
 				if (distSq < minDist * minDist) {
 					var dist = Math.sqrt(distSq) || 1;
 					var f = (minDist - dist) * k_repel;
@@ -187,30 +205,36 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 		for (var i = 0; i < this.nodes.length; i++) {
 			var node = this.nodes[i];
 			var fwdX = 1, fwdY = 0;
+			
+			// Determine LOCAL forward direction based on segment orientation
 			if (i < numSegments) {
-				var n2 = this.nodes[i + 1];
-				var dx = node.x - n2.x;
-				var dy = node.y - n2.y;
+				var next = this.nodes[i + 1];
+				var dx = node.x - next.x;
+				var dy = node.y - next.y;
 				var d = Math.hypot(dx, dy) || 1;
 				fwdX = dx / d;
 				fwdY = dy / d;
 			} else {
-				var n0 = this.nodes[i - 1];
-				var dx = n0.x - node.x;
-				var dy = n0.y - node.y;
+				var prev = this.nodes[i - 1];
+				var dx = prev.x - node.x;
+				var dy = prev.y - node.y;
 				var d = Math.hypot(dx, dy) || 1;
 				fwdX = dx / d;
 				fwdY = dy / d;
 			}
+			
 			var latX = -fwdY;
 			var latY = fwdX;
 
+			// Decompose velocity into local forward and lateral components
 			var vFwd = node.vx * fwdX + node.vy * fwdY;
 			var vLat = node.vx * latX + node.vy * latY;
 
+			// Apply anisotropic friction
 			vFwd *= (1 - k_fwd_friction);
 			vLat *= (1 - k_lat_friction);
 
+			// Re-integrate back into global velocity
 			node.vx = vFwd * fwdX + vLat * latX;
 			node.vy = vFwd * fwdY + vLat * latY;
 
@@ -270,11 +294,9 @@ canvas.addEventListener('mousedown', addFood, false);
  * @param {MouseEvent} event - The mouse event object containing the coordinates of the click.
  */
 function addFood(event) {
-	var x = event.x;
-	var y = event.y;
-
-	x -= canvas.offsetLeft;
-	y -= canvas.offsetTop;
+	var rect = canvas.getBoundingClientRect();
+	var x = event.clientX - rect.left;
+	var y = event.clientY - rect.top;
 
 	food.push({ x: x, y: y });
 }
@@ -319,15 +341,7 @@ function update() {
 			headX - food[i].x,
 			headY - food[i].y,
 		);
-		
-		if (dist <= 20) {
-			// Eat food if close enough
-			food.splice(i, 1);
-			i--;
-			continue;
-		}
-		
-		currentSmell += 100 / (dist * dist + 1); // Avoid division by zero
+		currentSmell += 200 / (dist + 1); // Linear smell for better distance gradient
 	}
 
 	BRAIN.foodGradient = currentSmell - lastSmell;
@@ -354,6 +368,17 @@ function update() {
 	// Update PhysicsWorm
 	for (var step = 0; step < 4; step++) {
 		chain.update(BRAIN.segmentActivations);
+		
+		// Precise food consumption check
+		var hX = chain.nodes[0].x;
+		var hY = chain.nodes[0].y;
+		for (var i = 0; i < food.length; i++) {
+			var d = Math.hypot(hX - food[i].x, hY - food[i].y);
+			if (d < 40) { // Very generous consumption radius at the head
+				food.splice(i, 1);
+				i--;
+			}
+		}
 	}
 }
 
@@ -366,50 +391,56 @@ function draw() {
 
 	var numNodes = chain.nodes.length;
 	
+	ctx.shadowBlur = 0;
+
 	// Pass 1: Translucent Body Flesh
+	// Draw from tail (high index) to head (node 0) so the head is on top
 	for (var i = numNodes - 2; i >= 0; i--) {
 		var p1 = chain.nodes[i];
 		var p2 = chain.nodes[i + 1];
 
-		var progress = i / numNodes;
-		// Micrograph taper: Rounded head, fat middle, extremely sharp needle tail
-		var thickness = 28 * Math.pow(Math.sin(Math.PI * Math.pow(progress, 0.7)), 0.5);
-		if (progress > 0.9) thickness *= (1 - (progress - 0.9) * 10); // Sharper tail
+		var progress = i / numNodes; // 0 at head, ~1 at tail
+		
+		// Micrograph taper: Blunt Head, Fat Middle, Needle Tail
+		// We use a combination of functions to get the exact silhouette from your image
+		var thickness = 26 * Math.pow(Math.sin(Math.PI * (progress * 0.8 + 0.15)), 0.5);
+		if (progress > 0.8) thickness *= Math.pow(1 - (progress - 0.8) / 0.2, 2); // Sharpen tail to a point
+		if (progress < 0.1) thickness = 18 + progress * 80; // Ensure head is rounded/blunt
+		
 		if (thickness < 1) thickness = 1;
 
 		ctx.beginPath();
 		ctx.moveTo(p1.x, p1.y);
 		ctx.lineTo(p2.x, p2.y);
 		ctx.lineWidth = thickness;
-		// Micrograph grey-tan translucent palette
-		ctx.strokeStyle = 'rgba(235, 235, 230, 0.2)';
+		ctx.strokeStyle = 'rgba(235, 235, 230, 0.25)';
 		ctx.lineJoin = 'round';
 		ctx.lineCap = 'round';
 		ctx.stroke();
 		
-		// Pass 2: Inner "Organ" Detail
-		if (i % 2 === 0 && progress > 0.2 && progress < 0.8) {
+		// Pass 2: Inner "Organ" Detail (only in the fat middle section)
+		if (i % 3 === 0 && progress > 0.15 && progress < 0.7) {
 			ctx.beginPath();
-			ctx.arc(p1.x, p1.y, thickness * 0.3, 0, Math.PI * 2);
-			ctx.fillStyle = 'rgba(180, 180, 170, 0.15)';
+			ctx.arc(p1.x, p1.y, thickness * 0.35, 0, Math.PI * 2);
+			ctx.fillStyle = 'rgba(170, 170, 160, 0.1)';
 			ctx.fill();
 		}
 	}
 
-	// Pass 3: Edge highlight/outline for definition
-	ctx.globalCompositeOperation = 'source-over';
+	// Pass 3: Edge highlight for definition
 	for (var i = numNodes - 2; i >= 0; i--) {
 		var p1 = chain.nodes[i];
 		var p2 = chain.nodes[i + 1];
 		var progress = i / numNodes;
-		var thickness = 28 * Math.pow(Math.sin(Math.PI * Math.pow(progress, 0.7)), 0.5);
-		if (progress > 0.9) thickness *= (1 - (progress - 0.9) * 10);
-		
+		var thickness = 26 * Math.pow(Math.sin(Math.PI * (progress * 0.8 + 0.15)), 0.5);
+		if (progress > 0.8) thickness *= Math.pow(1 - (progress - 0.8) / 0.2, 2);
+		if (progress < 0.1) thickness = 18 + progress * 80;
+
 		ctx.beginPath();
 		ctx.moveTo(p1.x, p1.y);
 		ctx.lineTo(p2.x, p2.y);
 		ctx.lineWidth = thickness;
-		ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'; // Very subtle shell highlight
+		ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)'; 
 		ctx.stroke();
 	}
 }
