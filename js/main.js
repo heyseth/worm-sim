@@ -29,6 +29,8 @@ document.getElementById('centerButton').onclick = function () {
 var food = [];
 var collisionTimer = 0;
 var lastSmell = 0;
+var FOOD_RADIUS = 10;
+var MOUTH_FOOD_HITBOX_RADIUS = FOOD_RADIUS + 2;
 
 function toggleConnectome() {
 	document.getElementById('nodeHolder').style.opacity =
@@ -316,7 +318,7 @@ function addFood(event) {
  */
 function drawFood() {
 	for (var i = 0; i < food.length; i++) {
-		circle(ctx, food[i].x, food[i].y, 10, 'rgb(251,192,45)');
+		circle(ctx, food[i].x, food[i].y, FOOD_RADIUS, 'rgb(251,192,45)');
 	}
 }
 
@@ -384,7 +386,7 @@ function update() {
 		var hY = chain.nodes[0].y;
 		for (var i = 0; i < food.length; i++) {
 			var d = Math.hypot(hX - food[i].x, hY - food[i].y);
-			if (d < 40) { // Very generous consumption radius at the head
+			if (d < MOUTH_FOOD_HITBOX_RADIUS) {
 				food.splice(i, 1);
 				i--;
 			}
