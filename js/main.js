@@ -117,11 +117,10 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 
 			var dorsal = activation.dorsal || 0;
 			var ventral = activation.ventral || 0;
-			var left = activation.left || 0;
-			var right = activation.right || 0;
+			var turn = activation.turn || 0;
 
 			var bendSignal = (ventral - dorsal) / (Math.abs(ventral) + Math.abs(dorsal) + 18);
-			var steerSignal = (right - left) / (Math.abs(right) + Math.abs(left) + 8);
+			var steerSignal = Math.max(-1, Math.min(1, turn));
 			var anteriorBias = 1 - activationIdx / (segmentActivations.length - 1);
 			var targetBend = bendSignal * k_bend + steerSignal * k_steer * (0.25 + anteriorBias);
 

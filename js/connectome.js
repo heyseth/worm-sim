@@ -56,9 +56,10 @@ BRAIN.stimulateFoodSenseNeurons = false;
 
 BRAIN.segmentActivations = [];
 for (var i = 0; i < 17; i++) {
-	BRAIN.segmentActivations.push({ left: 0, right: 0, dorsal: 0, ventral: 0 });
+	BRAIN.segmentActivations.push({ left: 0, right: 0, dorsal: 0, ventral: 0, turn: 0 });
 }
 BRAIN.wanderSeed = Math.random() * Math.PI * 2;
+BRAIN.turnSignal = 0;
 
 BRAIN.randExcite = function () {
 	var keys = Object.keys(BRAIN.connectome);
@@ -145,19 +146,7 @@ BRAIN.update = function () {
 
 	var wander = Math.sin(Date.now() / 2100 + BRAIN.wanderSeed) +
 		0.45 * Math.sin(Date.now() / 870 + BRAIN.wanderSeed * 1.7);
-	var wanderStr = Math.round(Math.abs(wander) * 3);
-	for (var seg = 7; seg <= 10; seg++) {
-		var numStr = seg < 10 ? '0' + seg : '' + seg;
-		for (var i = 0; i < wanderStr; i++) {
-			if (wander > 0) {
-				BRAIN.dendriteAccumulate('MDL' + numStr);
-				BRAIN.dendriteAccumulate('MVL' + numStr);
-			} else {
-				BRAIN.dendriteAccumulate('MDR' + numStr);
-				BRAIN.dendriteAccumulate('MVR' + numStr);
-			}
-		}
-	}
+	BRAIN.turnSignal = Math.max(-0.35, Math.min(0.35, wander * 0.22));
 
 	BRAIN.runconnectome();
 };
@@ -190,7 +179,7 @@ BRAIN.motorcontrol = function () {
 	BRAIN.accumright = 0;
 	BRAIN.accumdorsal = 0;
 	BRAIN.accumventral = 0;
-	for (var i = 0; i < 17; i++) BRAIN.segmentActivations[i] = { left: 0, right: 0, dorsal: 0, ventral: 0 };
+	for (var i = 0; i < 17; i++) BRAIN.segmentActivations[i] = { left: 0, right: 0, dorsal: 0, ventral: 0, turn: 0 };
 	for (var m = 0; m < BRAIN.muscleList.length; m++) {
 		var muscleName = BRAIN.muscleList[m];
 		var segmentNum = parseInt(muscleName.substring(3), 10);
@@ -214,5 +203,8 @@ BRAIN.motorcontrol = function () {
 			BRAIN.accumventral += val;
 			BRAIN.segmentActivations[segmentIdx].ventral += val;
 		}
+	}
+	for (var i = 0; i < 5; i++) {
+		BRAIN.segmentActivations[i].turn = BRAIN.turnSignal * (1 - i / 5);
 	}
 };
