@@ -95,6 +95,7 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 		var k_bend = 1.1; 
 		var k_steer = 1.8;
 		var k_head_steer = 1.1;
+		var k_forward_drive = 0.08;
 		var k_stiffness = 0.1; 
 		var k_repel = 1.2; 
 		var k_fwd_friction = 0.025; 
@@ -237,6 +238,16 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 			// Re-integrate back into global velocity
 			node.vx = vFwd * fwdX + vLat * latX;
 			node.vy = vFwd * fwdY + vLat * latY;
+
+			var activationIdx = Math.floor((i / numSegments) * segmentActivations.length);
+			if (activationIdx >= segmentActivations.length) activationIdx = segmentActivations.length - 1;
+			var activation = segmentActivations[activationIdx];
+			var dorsal = activation.dorsal || 0;
+			var ventral = activation.ventral || 0;
+			var drive = (Math.abs(dorsal) + Math.abs(ventral)) /
+				(Math.abs(dorsal) + Math.abs(ventral) + 45);
+			node.vx += fwdX * drive * k_forward_drive;
+			node.vy += fwdY * drive * k_forward_drive;
 
 			node.x += node.vx * dt;
 			node.y += node.vy * dt;
