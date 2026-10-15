@@ -85,18 +85,11 @@ BRAIN.randExcite();
 
 /* ---------- Controls ---------- */
 
-var SPEEDS = [1, 2, 5, 10];
 var simulationSpeed = 1;
-var speedButton = document.getElementById('speedButton');
 var clearButton = document.getElementById('clearButton');
 var brainButton = document.getElementById('brainButton');
 var brainPanel = document.getElementById('brainPanel');
 var hint = document.getElementById('hint');
-
-speedButton.onclick = function () {
-	simulationSpeed = SPEEDS[(SPEEDS.indexOf(simulationSpeed) + 1) % SPEEDS.length];
-	speedButton.textContent = simulationSpeed + '×';
-};
 
 clearButton.onclick = function () {
 	food = [];

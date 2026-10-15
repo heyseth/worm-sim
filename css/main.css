@@ -277,16 +277,6 @@ body::before {
     fill: currentColor;
 }
 
-.tool-text {
-    width: auto;
-    min-width: calc(var(--tool) + 8px);
-    padding: 0 12px;
-    font-size: 13px;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.01em;
-}
-
 .tool:active:not(:disabled) {
     transform: scale(0.92);
 }
