@@ -7,7 +7,11 @@ Despite being so simple, C. elegans exhibits several complex behaviors. They wil
 In this demo, hunger neurons are continuously stimulated. If the worm nears food, food sensing neurons are stimulated. If the worm reaches the edge of the window, nose touch sensory neurons are stimulated.
 
 ## Usage
-Head on over to [heyseth.github.io/worm-sim/](https://heyseth.github.io/worm-sim/) and watch the worm wriggle around. Click to place down food. The green dots at the top are a visual representation of the connectome, with each dot representing a neuron (increased opacity = increased activity). There are buttons to hide the connectome, reset the worm's position, and to clear placed down food.
+Head on over to [heyseth.github.io/worm-sim/](https://heyseth.github.io/worm-sim/) and watch the worm wriggle around. Click or tap anywhere to drop food; the worm follows the scent and leaves faint tracks in the agar as it goes.
+
+The panel in the corner shows the connectome live. Each dot is a neuron, laid out on a spiral with the most connected neurons in the middle, and it flashes when that neuron fires. Hover over or tap a dot to see the neuron's name. The two rows of bars underneath show dorsal and ventral muscle activation from head to tail, so you can watch the bending wave travel down the body.
+
+The toolbar at the bottom changes the simulation speed, recenters the worm, clears food, hides the connectome panel and links to the source. The page follows your device's light or dark theme.
 
 To reiterate, the worm you see on your screen is being controlled entirely by a simulated virtual worm brain. Very cool if you ask me!
 
