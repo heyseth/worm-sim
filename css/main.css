@@ -159,6 +159,8 @@ body::before {
 .status[data-state="approach"] .status-dot { background: var(--accent); }
 .status[data-state="search"] .status-dot { background: var(--food); }
 .status[data-state="touch"] .status-dot { background: var(--alert); animation-duration: 0.8s; }
+.status[data-state="reverse"] .status-dot,
+.status[data-state="turn"] .status-dot { background: var(--ink); animation-duration: 1.2s; }
 
 .eaten:not(:empty)::before {
     content: "·";

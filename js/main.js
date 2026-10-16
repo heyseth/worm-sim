@@ -73,6 +73,7 @@ var trail = [];
 var TRAIL_MAX = 700;
 var TRAIL_SPACING = 4;
 var collisionTimer = 0;
+var tailTouchTimer = 0;
 var lastSmell = 0;
 var smellTrend = 0;
 var eaten = 0;
@@ -142,6 +143,8 @@ var STATUS_LABELS = {
 	approach: 'Following scent',
 	search: 'Searching for scent',
 	touch: 'Nose touch',
+	reverse: 'Reversing',
+	turn: 'Omega turn',
 };
 var pendingState = 'forage';
 var pendingFrames = 0;
@@ -152,6 +155,8 @@ var pendingFrames = 0;
 function updateStatus() {
 	var state = 'forage';
 	if (collisionTimer > 0) state = 'touch';
+	else if (BRAIN.reversing) state = 'reverse';
+	else if (BRAIN.turning > 0) state = 'turn';
 	else if (food.length > 0) state = smellTrend > 0.0004 ? 'approach' : 'search';
 
 	if (state !== pendingState) {
@@ -184,83 +189,47 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 		});
 	}
 
+	/**
+	 * Advances the body one physics step. At the worm's size inertia is negligible, so the body is
+	 * overdamped: each node moves at a velocity set by the force on it and by resistive drag that is
+	 * much higher sideways than lengthwise, as for a worm crawling in an agar groove.
+	 */
 	this.update = function (segmentActivations) {
-		var dt = 0.16; // Timestep
-		var k_spring = 0.72; 
-		var k_bend = 1.1; 
-		var k_steer = 1.8;
-		var k_head_steer = 1.1;
-		var k_forward_drive = 0.08;
-		var k_stiffness = 0.1; 
-		var k_repel = 1.2; 
-		var k_fwd_friction = 0.025; 
-		var k_lat_friction = 0.5; 
+		var SUBSTEPS = 8;
+		var dt = 0.75;
+		var k_bend = 100; // Bending stiffness of body and muscles, per radian
+		var BEND_MAX = 0.4; // Joint angle (radians) the muscles reach at full one-sided contraction
+		var k_repel = 1.2;
+		var DRAG_RATIO = 30; // Sideways to lengthwise drag; roughly 10-40 for crawling on agar
+		var LENGTH_ITERATIONS = 3;
 
-		var numSegments = this.nodes.length - 1;
-
+		var nodes = this.nodes;
+		var numSegments = nodes.length - 1;
 		this.segmentBends = [];
 
-		// 1. Apply bending forces from muscles + Angular Stiffness
+		// Target joint angles from the muscles, which run the full length of the body
+		var targets = [];
 		for (var i = 1; i < numSegments; i++) {
-			var prevNode = this.nodes[i - 1];
-			var currNode = this.nodes[i];
-			var nextNode = this.nodes[i + 1];
-
-			var activationIdx = Math.floor((i / numSegments) * segmentActivations.length);
-			if (activationIdx >= segmentActivations.length) activationIdx = segmentActivations.length - 1;
+			var activationIdx = Math.min(segmentActivations.length - 1, Math.floor((i / numSegments) * segmentActivations.length));
 			var activation = segmentActivations[activationIdx];
-
 			var dorsal = activation.dorsal || 0;
 			var ventral = activation.ventral || 0;
-			var turn = activation.turn || 0;
-
-			var bendSignal = (ventral - dorsal) / (Math.abs(ventral) + Math.abs(dorsal) + 18);
-			var steerSignal = Math.max(-1, Math.min(1, turn));
-			var anteriorBias = 1 - activationIdx / (segmentActivations.length - 1);
-			var targetBend = bendSignal * k_bend + steerSignal * k_steer * (0.25 + anteriorBias);
-
-			// Current vectors
-			var v1x = currNode.x - prevNode.x;
-			var v1y = currNode.y - prevNode.y;
-			var v2x = nextNode.x - currNode.x;
-			var v2y = nextNode.y - currNode.y;
-			
-			var len1 = Math.hypot(v1x, v1y) || 1;
-			var len2 = Math.hypot(v2x, v2y) || 1;
-
-			// Normalize cross product to get sine of angle
-			var currentBend = (v1x * v2y - v1y * v2x) / (len1 * len2);
-			this.segmentBends[i] = currentBend;
-
-			// Combined force: muscle torque - stiffness (restoring force)
-			var force = targetBend - (currentBend * k_stiffness * 18); 
-
-			var p1x = -v1y / len1; 
-			var p1y = v1x / len1;
-			var p2x = -v2y / len2; 
-			var p2y = v2x / len2;
-
-			prevNode.vx += p1x * force;
-			prevNode.vy += p1y * force;
-			currNode.vx -= (p1x + p2x) * force;
-			currNode.vy -= (p1y + p2y) * force;
-			nextNode.vx += p2x * force;
-			nextNode.vy += p2y * force;
-
-			if (i < 6) {
-				var headSteer = steerSignal * k_head_steer * anteriorBias;
-				prevNode.vx += p1x * headSteer;
-				prevNode.vy += p1y * headSteer;
-				currNode.vx += p1x * headSteer * 0.5;
-				currNode.vy += p1y * headSteer * 0.5;
-			}
+			// Steering is not added here: the worm turns only by bending its head more to one side
+			targets[i] = BEND_MAX * (ventral - dorsal) / (ventral + dorsal + 0.6);
 		}
 
-		// 2. Self-Repulsion (Prevent overlap/bunching)
-		for (var i = 0; i < this.nodes.length; i++) {
-			for (var j = i + 2; j < this.nodes.length; j++) {
-				var n1 = this.nodes[i];
-				var n2 = this.nodes[j];
+		// Self-repulsion so the body cannot pass through itself. It changes slowly, so it is worked
+		// out once per step rather than every substep.
+		for (var i = 0; i < nodes.length; i++) {
+			nodes[i].px = nodes[i].x;
+			nodes[i].py = nodes[i].y;
+			nodes[i].rx = 0;
+			nodes[i].ry = 0;
+		}
+		for (var i = 0; i < nodes.length; i++) {
+			for (var j = i + 2; j < nodes.length; j++) {
+				var n1 = nodes[i];
+				var n2 = nodes[j];
 				var dx = n2.x - n1.x;
 				var dy = n2.y - n1.y;
 				var distSq = dx * dx + dy * dy;
@@ -270,81 +239,102 @@ var PhysicsWorm = function (numNodes, segmentLength) {
 					var f = (minDist - dist) * k_repel;
 					var fx = (dx / dist) * f;
 					var fy = (dy / dist) * f;
-					n1.vx -= fx;
-					n1.vy -= fy;
-					n2.vx += fx;
-					n2.vy += fy;
+					n1.rx -= fx;
+					n1.ry -= fy;
+					n2.rx += fx;
+					n2.ry += fy;
 				}
 			}
 		}
 
-		// 3. Distance Constraints
-		for (var i = 0; i < numSegments; i++) {
-			var n1 = this.nodes[i];
-			var n2 = this.nodes[i + 1];
-			var dx = n2.x - n1.x;
-			var dy = n2.y - n1.y;
-			var dist = Math.hypot(dx, dy);
-			if (dist > 0) {
-				var diff = dist - this.segmentLength;
-				var fx = (dx / dist) * diff * k_spring;
-				var fy = (dy / dist) * diff * k_spring;
-				n1.vx += fx;
-				n1.vy += fy;
-				n2.vx -= fx;
-				n2.vy -= fy;
+		for (var step = 0; step < SUBSTEPS; step++) {
+			for (var i = 0; i < nodes.length; i++) {
+				var node = nodes[i];
+				node.fx = node.rx;
+				node.fy = node.ry;
+				// Unit tangent along the body at this node, used for drag
+				var a = nodes[Math.max(0, i - 1)];
+				var b = nodes[Math.min(numSegments, i + 1)];
+				var tl = Math.sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)) || 1;
+				node.tx = (a.x - b.x) / tl;
+				node.ty = (a.y - b.y) / tl;
+			}
+
+			// 1. Bending: muscles set each joint's target angle and body stiffness pulls toward it
+			for (var i = 1; i < numSegments; i++) {
+				var prevNode = nodes[i - 1];
+				var currNode = nodes[i];
+				var nextNode = nodes[i + 1];
+				var v1x = currNode.x - prevNode.x;
+				var v1y = currNode.y - prevNode.y;
+				var v2x = nextNode.x - currNode.x;
+				var v2y = nextNode.y - currNode.y;
+				var len1 = Math.sqrt(v1x * v1x + v1y * v1y) || 1;
+				var len2 = Math.sqrt(v2x * v2x + v2y * v2y) || 1;
+				var cross = v1x * v2y - v1y * v2x;
+
+				// Sine of the joint angle, positive toward the ventral side
+				this.segmentBends[i] = cross / (len1 * len2);
+
+				var angle = Math.atan2(cross, v1x * v2x + v1y * v2y);
+				var torque = k_bend * (targets[i] - angle);
+
+				// Apply the torque as a force couple on the two segments
+				var f1x = (-v1y / len1) * torque / len1;
+				var f1y = (v1x / len1) * torque / len1;
+				var f2x = (-v2y / len2) * torque / len2;
+				var f2y = (v2x / len2) * torque / len2;
+				prevNode.fx += f1x;
+				prevNode.fy += f1y;
+				nextNode.fx += f2x;
+				nextNode.fy += f2y;
+				currNode.fx -= f1x + f2x;
+				currNode.fy -= f1y + f2y;
+			}
+
+			// 2. Resistive drag. This is the only thing that turns the bending wave into motion, so a
+			// wave travelling head to tail moves the worm forward and tail to head moves it backward.
+			for (var i = 0; i < nodes.length; i++) {
+				var node = nodes[i];
+				var fAlong = node.fx * node.tx + node.fy * node.ty;
+				var fAcross = (node.fy * node.tx - node.fx * node.ty) / DRAG_RATIO;
+				node.x += (fAlong * node.tx - fAcross * node.ty) * dt;
+				node.y += (fAlong * node.ty + fAcross * node.tx) * dt;
+			}
+
+			// 3. Segment length. Each node gives way in proportion to how easily it moves in that
+			// direction, so holding the body together does not bypass the drag.
+			for (var iter = 0; iter < LENGTH_ITERATIONS; iter++) {
+				for (var i = 0; i < numSegments; i++) {
+					var n1 = nodes[i];
+					var n2 = nodes[i + 1];
+					var dx = n2.x - n1.x;
+					var dy = n2.y - n1.y;
+					var dist = Math.sqrt(dx * dx + dy * dy);
+					if (!dist) continue;
+					dx /= dist;
+					dy /= dist;
+					// Displacement of each node per unit push along (dx, dy), given its drag
+					var a1 = dx * n1.tx + dy * n1.ty;
+					var b1 = (dy * n1.tx - dx * n1.ty) / DRAG_RATIO;
+					var m1x = a1 * n1.tx - b1 * n1.ty;
+					var m1y = a1 * n1.ty + b1 * n1.tx;
+					var a2 = dx * n2.tx + dy * n2.ty;
+					var b2 = (dy * n2.tx - dx * n2.ty) / DRAG_RATIO;
+					var m2x = a2 * n2.tx - b2 * n2.ty;
+					var m2y = a2 * n2.ty + b2 * n2.tx;
+					var lambda = (dist - this.segmentLength) / (m1x * dx + m1y * dy + m2x * dx + m2y * dy);
+					n1.x += m1x * lambda;
+					n1.y += m1y * lambda;
+					n2.x -= m2x * lambda;
+					n2.y -= m2y * lambda;
+				}
 			}
 		}
 
-		// 4. Friction and Integration
-		for (var i = 0; i < this.nodes.length; i++) {
-			var node = this.nodes[i];
-			var fwdX = 1, fwdY = 0;
-			
-			// Determine LOCAL forward direction based on segment orientation
-			if (i < numSegments) {
-				var next = this.nodes[i + 1];
-				var dx = node.x - next.x;
-				var dy = node.y - next.y;
-				var d = Math.hypot(dx, dy) || 1;
-				fwdX = dx / d;
-				fwdY = dy / d;
-			} else {
-				var prev = this.nodes[i - 1];
-				var dx = prev.x - node.x;
-				var dy = prev.y - node.y;
-				var d = Math.hypot(dx, dy) || 1;
-				fwdX = dx / d;
-				fwdY = dy / d;
-			}
-			
-			var latX = -fwdY;
-			var latY = fwdX;
-
-			// Decompose velocity into local forward and lateral components
-			var vFwd = node.vx * fwdX + node.vy * fwdY;
-			var vLat = node.vx * latX + node.vy * latY;
-
-			// Apply anisotropic friction
-			vFwd *= (1 - k_fwd_friction);
-			vLat *= (1 - k_lat_friction);
-
-			// Re-integrate back into global velocity
-			node.vx = vFwd * fwdX + vLat * latX;
-			node.vy = vFwd * fwdY + vLat * latY;
-
-			var activationIdx = Math.floor((i / numSegments) * segmentActivations.length);
-			if (activationIdx >= segmentActivations.length) activationIdx = segmentActivations.length - 1;
-			var activation = segmentActivations[activationIdx];
-			var dorsal = activation.dorsal || 0;
-			var ventral = activation.ventral || 0;
-			var drive = (Math.abs(dorsal) + Math.abs(ventral)) /
-				(Math.abs(dorsal) + Math.abs(ventral) + 45);
-			node.vx += fwdX * drive * k_forward_drive;
-			node.vy += fwdY * drive * k_forward_drive;
-
-			node.x += node.vx * dt;
-			node.y += node.vy * dt;
+		for (var i = 0; i < nodes.length; i++) {
+			nodes[i].vx = nodes[i].x - nodes[i].px;
+			nodes[i].vy = nodes[i].y - nodes[i].py;
 		}
 	};
 };
@@ -355,25 +345,21 @@ var chain;
  * Advances the brain and body by one simulation tick.
  */
 function update() {
+	// Keep the whole body inside the dish. The nose touching the edge stimulates the nose touch
+	// neurons, and the tail touching it (when backing up) stimulates the posterior touch neurons.
+	var last = chain.nodes.length - 1;
+	for (var i = 0; i <= last; i++) {
+		var node = chain.nodes[i];
+		var x = Math.max(0, Math.min(VIEW.w, node.x));
+		var y = Math.max(0, Math.min(VIEW.h, node.y));
+		if (x === node.x && y === node.y) continue;
+		node.x = x;
+		node.y = y;
+		if (i === 0) collisionTimer = 120;
+		else if (i >= last - 2) tailTouchTimer = 60;
+	}
 	var headX = chain.nodes[0].x;
 	var headY = chain.nodes[0].y;
-
-	// Keep the head inside the dish; touching the edge stimulates nose touch neurons
-	if (headX < 0) {
-		chain.nodes[0].x = 0;
-		collisionTimer = 120;
-	} else if (headX > VIEW.w) {
-		chain.nodes[0].x = VIEW.w;
-		collisionTimer = 120;
-	}
-
-	if (headY < 0) {
-		chain.nodes[0].y = 0;
-		collisionTimer = 120;
-	} else if (headY > VIEW.h) {
-		chain.nodes[0].y = VIEW.h;
-		collisionTimer = 120;
-	}
 
 	// Calculate continuous smell gradient (Chemotaxis)
 	var currentSmell = 0;
@@ -392,10 +378,12 @@ function update() {
 	} else {
 		BRAIN.stimulateNoseTouchNeurons = false;
 	}
+	BRAIN.stimulateTailTouchNeurons = tailTouchTimer > 0;
+	if (tailTouchTimer > 0) tailTouchTimer--;
 
 	BRAIN.stimulateHungerNeurons = true;
 
-	BRAIN.update();
+	BRAIN.update(chain.segmentBends);
 	frameCount++;
 
 	for (var step = 0; step < 4; step++) {
