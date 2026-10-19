@@ -4,43 +4,43 @@
 /* Pls do not remove this header - zrispo
  */
 
+// The wiring itself now comes from Cook et al. (2019) with synapse signs from Fenyves et al. (2020);
+// see js/constants.js and tools/build_connectome.py.
+
 var BRAIN = {};
 
 BRAIN.weights = weights;
+BRAIN.gapJunctions = gapJunctions;
 
-BRAIN.dendriteAccumulate = function (preSynaptic) {
-	// Command interneurons inhibit each other rather than exciting, so their input from one another is left out
-	var fromCommand = preSynaptic in BRAIN.commandInput;
-	for (var postSynaptic in BRAIN.weights[preSynaptic]) {
-		if (BRAIN.postSynaptic[postSynaptic]) {
-			BRAIN.postSynaptic[postSynaptic][BRAIN.nextState] +=
-				BRAIN.weights[preSynaptic][postSynaptic];
-			if (!fromCommand && postSynaptic in BRAIN.commandInput) {
-				BRAIN.commandInput[postSynaptic] += BRAIN.weights[preSynaptic][postSynaptic];
-			}
-		}
-	}
-};
-
-/**
- * Injects current straight into a neuron, the way a sensory or proprioceptive stimulus would.
+/* ---------- Neurons ----------
+ * Most C. elegans neurons do not fire action potentials. Each neuron here has a graded potential
+ * that relaxes toward its input, and an output between 0 and 1 (a sigmoid of the potential) that
+ * sets how strongly it drives its synapses:
+ *  - chemical synapses pass output times weight, negative where the synapse inhibits;
+ *  - gap junctions pass current in proportion to the difference in potential;
+ *  - each neuron slowly adapts to its own activity, so nothing stays active forever;
+ *  - every neuron gets a little random input, standing in for synaptic and channel noise.
  */
-BRAIN.stimulate = function (neuron, amount) {
-	if (BRAIN.postSynaptic[neuron]) BRAIN.postSynaptic[neuron][BRAIN.nextState] += amount;
-	if (neuron in BRAIN.commandInput) BRAIN.commandInput[neuron] += amount;
-};
 
-BRAIN.thisState = 0;
-BRAIN.nextState = 1;
-BRAIN.fireThreshold = 30;
-BRAIN.NOISE = 4; // Random input to every neuron each tick, standing in for synaptic and channel noise
-BRAIN.muscles = ['MVU', 'MVL', 'MDL', 'MVR', 'MDR'];
+BRAIN.RELAX = 0.1; // Fraction of the way the potential moves toward its input each tick (time constant ~0.17 s)
+BRAIN.THRESHOLD = 1; // Potential at which output is one half
+BRAIN.SLOPE = 0.25; // Steepness of the output curve
+BRAIN.SYNAPSE_GAIN = 0.18; // Input per unit of synapse weight from a fully active neuron
+BRAIN.GAP_GAIN = 0.1; // Gap junction current per unit weight per unit of potential difference
+BRAIN.MAX_GAP_COUPLING = 2; // Cap on a neuron's total gap junction coupling, which keeps it stable
+BRAIN.ADAPTATION = 2; // How strongly a neuron's own recent activity holds it back
+BRAIN.ADAPTATION_TICKS = 120; // ...averaged over about 2 s
+BRAIN.NOISE = 1.4; // Standard deviation of the random input
+
+BRAIN.SENSORY_DRIVE = 3; // Input to a sensory neuron that is being stimulated
+BRAIN.HUNGER_DRIVE = 1.2; // Input to the hunger neurons RIM and RIC
+BRAIN.FORWARD_DRIVE = 0.8; // Steady input to AVB, which makes forward the default
 
 // Body wall muscles sit in four quadrants (dorsal/ventral, left/right) of 24 rows from head to tail.
 // The worm crawls on its side, so only the dorsal/ventral split bends the body in the plane of the agar.
 BRAIN.MUSCLE_ROWS = 24;
-BRAIN.MUSCLE_DECAY = 0.8; // Muscle activation relaxes over a few hundred ms rather than following each spike
-BRAIN.MUSCLE_GAIN = 8;
+BRAIN.MUSCLE_DECAY = 0.8; // Muscle activation relaxes over a few hundred ms
+BRAIN.MUSCLE_GAIN = 7;
 BRAIN.MUSCLE_COUPLING = 0.25; // Gap junctions between neighbouring muscle rows (Liu et al., 2006)
 
 BRAIN.stimulateHungerNeurons = true;
@@ -48,10 +48,31 @@ BRAIN.stimulateNoseTouchNeurons = false;
 BRAIN.stimulateTailTouchNeurons = false;
 BRAIN.foodGradient = 0;
 
+BRAIN.NOSE_TOUCH_NEURONS = ['FLPR', 'FLPL', 'ASHL', 'ASHR', 'IL1VL', 'IL1VR', 'OLQDL', 'OLQDR', 'OLQVR', 'OLQVL'];
+BRAIN.TAIL_TOUCH_NEURONS = ['PLML', 'PLMR', 'PVDL', 'PVDR'];
+BRAIN.HUNGER_NEURONS = ['RIML', 'RIMR', 'RICL', 'RICR'];
+
 BRAIN.segmentActivations = [];
 for (var i = 0; i < BRAIN.MUSCLE_ROWS; i++) {
 	BRAIN.segmentActivations.push({ dorsal: 0, ventral: 0 });
 }
+
+/* ---------- Choosing a direction ----------
+ * AVA and AVD drive backward locomotion and AVB and PVC forward. The two groups are active at
+ * different times (Kato et al., 2015), and circuit models represent this as mutual inhibition
+ * (e.g. Roberts et al., 2016), but the connectome data does not contain it: Fenyves et al. predict
+ * AVB inhibits AVA, while AVA to AVB and most other links between the groups come out ambiguous or
+ * excitatory. So, as a stated assumption, every neuron in each group inhibits every neuron in the
+ * other with weight COMMAND_INHIBITION. This is the only synapse in the model not taken from data.
+ *
+ * Which group wins is read straight off the network: the worm reverses while AVA is more active than
+ * AVB. Reversals begin when noise or a stimulus tips the balance and end as AVA adapts.
+ */
+
+BRAIN.FORWARD_COMMAND = ['AVBL', 'AVBR', 'PVCL', 'PVCR'];
+BRAIN.BACKWARD_COMMAND = ['AVAL', 'AVAR', 'AVDL', 'AVDR'];
+BRAIN.COMMAND_INHIBITION = 15;
+BRAIN.REVERSE_MARGIN = 0.2; // How far AVA must lead AVB to start a reversal, and trail it to end one
 
 /* ---------- Locomotion ----------
  * Nothing here injects a bending wave into the muscles. The undulation is produced by motor neurons:
@@ -62,8 +83,7 @@ for (var i = 0; i < BRAIN.MUSCLE_ROWS; i++) {
  *    (Wen et al., 2012; Boyle, Berri & Cohen, 2012), so the wave travels from head to tail.
  *  - Backward: the same in reverse. The A-type motor neurons in the tail (DA, VA) set the rhythm
  *    (Gao et al., 2018) and the others follow the body just posterior to them.
- * The command interneurons decide which of the two circuits runs: AVB and PVC for forward, AVA,
- * AVD and AVE for backward.
+ * Only the circuit matching the current direction gets this drive.
  */
 
 BRAIN.HEAD_END = 0.12; // Body fraction treated as the head when sensing head bend
@@ -74,39 +94,19 @@ BRAIN.PROPRIO_THRESHOLD = 0.03; // Bend that switches a B- or A-type motor neuro
 BRAIN.SWITCH_BEND = 0.1; // Head (or tail) bend that ends a half-swing early
 BRAIN.HALF_SWING_TICKS = 60; // Longest half-swing of the head (or tail) rhythm, so about 0.5 Hz
 BRAIN.MIN_HALF_SWING_TICKS = 45; // Shortest half-swing, however far the head has bent
-BRAIN.MOTOR_DRIVE = 40; // Stimulus per tick to a motor neuron that is switched on
+BRAIN.MOTOR_DRIVE = 3; // Input to a motor neuron that is switched on (and minus this when off)
 BRAIN.MAX_ON_TICKS = 70; // A B- or A-type motor neuron adapts and switches off after being on this long
 BRAIN.REFRACTORY_TICKS = 60; // ...and then cannot switch back on for this long
-
-BRAIN.FORWARD_COMMAND = ['AVBL', 'AVBR', 'PVCL', 'PVCR'];
-BRAIN.BACKWARD_COMMAND = ['AVAL', 'AVAR', 'AVDL', 'AVDR', 'AVEL', 'AVER'];
-BRAIN.FORWARD_MOTOR = /^(DB|VB)\d+$/;
-BRAIN.BACKWARD_MOTOR = /^(DA|VA|AS)\d+$/;
-BRAIN.INPUT_DECAY = 0.97; // Command neuron input is averaged over roughly half a second
-// Reversals start at random, at a rate that climbs steeply with the backward command input
-// (after Roberts et al., 2016): about SPONTANEOUS_REVERSALS a minute at rest, near-certain on a nose touch.
-BRAIN.SPONTANEOUS_REVERSALS = 1.5; // Per minute, at the resting command input REVERSE_REST
-BRAIN.REVERSE_REST = 2;
-BRAIN.REVERSE_SCALE = 1.5; // Increase in input that multiplies the reversal rate by e
-BRAIN.REVERSE_OFF = 9; // A reversal ends once the input falls below this...
-BRAIN.MIN_REVERSAL_TICKS = [45, 150]; // ...and it has lasted a random 0.75 to 2.5 s
 BRAIN.OMEGA_AFTER = 90; // Reversals longer than this many ticks end in an omega turn
 BRAIN.OMEGA_TICKS = 60; // Length of the omega turn's deep ventral head swing
-BRAIN.OMEGA_DRIVE = 40; // Stimulus per tick to RIV and SMDV during it
+BRAIN.OMEGA_DRIVE = 3; // Input to RIV and SMDV during it
 
 BRAIN.reversing = false;
 BRAIN.reversalTicks = 0;
-BRAIN.reversalLength = 0;
 BRAIN.turning = 0; // Ticks left in an omega turn
 BRAIN.headRhythm = { phase: 1, ticks: 0 }; // phase +1 ventral, -1 dorsal
 BRAIN.tailRhythm = { phase: 1, ticks: 0 };
-BRAIN.commandInput = {}; // Synaptic input to each command neuron this tick
-BRAIN.commandLevel = {}; // The same, averaged over time
-BRAIN.reverseDrive = 0;
-BRAIN.FORWARD_COMMAND.concat(BRAIN.BACKWARD_COMMAND).forEach(function (n) {
-	BRAIN.commandInput[n] = 0;
-	BRAIN.commandLevel[n] = 0;
-});
+BRAIN.reverseDrive = 0; // AVA output minus AVB output
 
 /**
  * Which locomotion circuit a motor neuron belongs to and which side it bends, or null.
@@ -122,38 +122,113 @@ BRAIN.motorRole = function (name) {
 	return null;
 };
 
+BRAIN.isMuscle = function (name) {
+	return /^M[DV][LR]\d\d$/.test(name);
+};
+
 BRAIN.setup = function () {
-	BRAIN.postSynaptic = {};
-	BRAIN.connectome = {};
-
-	// Dynamically initialize all neurons found in weights
+	// Every neuron in the wiring, indexed
+	var names = {};
 	for (var pre in BRAIN.weights) {
-		if (!BRAIN.postSynaptic[pre]) BRAIN.postSynaptic[pre] = [0, 0];
+		names[pre] = true;
 		for (var post in BRAIN.weights[pre]) {
-			if (!BRAIN.postSynaptic[post]) BRAIN.postSynaptic[post] = [0, 0];
+			if (!BRAIN.isMuscle(post)) names[post] = true;
 		}
-
-		// Capture pre in a closure using an IIFE
-		(function(neuronName) {
-			BRAIN.connectome[neuronName] = function () {
-				BRAIN.dendriteAccumulate(neuronName);
-			};
-		})(pre);
+	}
+	for (var a in BRAIN.gapJunctions) names[a] = true;
+	BRAIN.neurons = Object.keys(names).sort();
+	BRAIN.index = {};
+	BRAIN.neurons.forEach(function (name, i) {
+		BRAIN.index[name] = i;
+	});
+	var n = BRAIN.neurons.length;
+	BRAIN.potential = new Float64Array(n);
+	BRAIN.output = new Float64Array(n);
+	BRAIN.adaptation = new Float64Array(n);
+	BRAIN.input = new Float64Array(n); // External input for the coming tick
+	for (var i = 0; i < n; i++) {
+		BRAIN.potential[i] = Math.random() * 0.5;
+		BRAIN.output[i] = BRAIN.sigmoid(BRAIN.potential[i]);
 	}
 
-	// Body wall muscles, keyed by name, with their row, side and total excitatory innervation
-	BRAIN.muscleRows = {};
-	for (var name in BRAIN.postSynaptic) {
-		var m = /^M([DV])[LR](\d\d)$/.exec(name);
-		if (m) BRAIN.muscleRows[name] = { row: parseInt(m[2], 10) - 1, dorsal: m[1] === 'D', innervation: 0 };
-	}
+	// Chemical synapses between neurons, plus the assumed inhibition between the command groups
+	var synapses = {};
 	for (var pre in BRAIN.weights) {
 		for (var post in BRAIN.weights[pre]) {
-			if (BRAIN.muscleRows[post] && BRAIN.weights[pre][post] > 0) {
-				BRAIN.muscleRows[post].innervation += BRAIN.weights[pre][post];
+			if (!BRAIN.isMuscle(post)) synapses[pre + '>' + post] = BRAIN.weights[pre][post];
+		}
+	}
+	BRAIN.BACKWARD_COMMAND.forEach(function (back) {
+		BRAIN.FORWARD_COMMAND.forEach(function (fwd) {
+			synapses[back + '>' + fwd] = -BRAIN.COMMAND_INHIBITION;
+			synapses[fwd + '>' + back] = -BRAIN.COMMAND_INHIBITION;
+		});
+	});
+	var keys = Object.keys(synapses);
+	BRAIN.synapsePre = new Int32Array(keys.length);
+	BRAIN.synapsePost = new Int32Array(keys.length);
+	BRAIN.synapseWeight = new Float64Array(keys.length);
+	keys.forEach(function (key, k) {
+		var ends = key.split('>');
+		BRAIN.synapsePre[k] = BRAIN.index[ends[0]];
+		BRAIN.synapsePost[k] = BRAIN.index[ends[1]];
+		BRAIN.synapseWeight[k] = BRAIN.SYNAPSE_GAIN * synapses[key];
+	});
+
+	// Gap junctions, each once. A few neurons (ALA, PVD, PVC, AVA) have so many that their
+	// coupling is scaled down to MAX_GAP_COUPLING.
+	var scale = {};
+	for (var a in BRAIN.gapJunctions) {
+		var total = 0;
+		for (var b in BRAIN.gapJunctions[a]) total += BRAIN.gapJunctions[a][b];
+		scale[a] = Math.min(1, BRAIN.MAX_GAP_COUPLING / (BRAIN.GAP_GAIN * total));
+	}
+	var gapA = [];
+	var gapB = [];
+	var gapCoupling = [];
+	for (var a in BRAIN.gapJunctions) {
+		for (var b in BRAIN.gapJunctions[a]) {
+			if (a < b) {
+				gapA.push(BRAIN.index[a]);
+				gapB.push(BRAIN.index[b]);
+				gapCoupling.push(BRAIN.GAP_GAIN * BRAIN.gapJunctions[a][b] * Math.min(scale[a], scale[b]));
 			}
 		}
 	}
+	BRAIN.gapA = Int32Array.from(gapA);
+	BRAIN.gapB = Int32Array.from(gapB);
+	BRAIN.gapCoupling = Float64Array.from(gapCoupling);
+
+	// Body wall muscles: their row, side, and the synapses onto them relative to their total
+	// excitatory innervation, so lightly innervated head muscles still pull
+	BRAIN.muscleRows = {};
+	for (var pre in BRAIN.weights) {
+		for (var post in BRAIN.weights[pre]) {
+			var m = /^M([DV])[LR](\d\d)$/.exec(post);
+			if (!m) continue;
+			if (!BRAIN.muscleRows[post]) {
+				BRAIN.muscleRows[post] = { row: parseInt(m[2], 10) - 1, dorsal: m[1] === 'D', innervation: 0 };
+			}
+			if (BRAIN.weights[pre][post] > 0) BRAIN.muscleRows[post].innervation += BRAIN.weights[pre][post];
+		}
+	}
+	// Each neuromuscular junction targets one slot: row * 2, plus 1 for ventral
+	var nmjPre = [];
+	var nmjSlot = [];
+	var nmjWeight = [];
+	for (var pre in BRAIN.weights) {
+		for (var post in BRAIN.weights[pre]) {
+			var muscle = BRAIN.muscleRows[post];
+			if (!muscle || !muscle.innervation) continue;
+			nmjPre.push(BRAIN.index[pre]);
+			nmjSlot.push(muscle.row * 2 + (muscle.dorsal ? 0 : 1));
+			nmjWeight.push(BRAIN.weights[pre][post] / muscle.innervation);
+		}
+	}
+	BRAIN.nmjPre = Int32Array.from(nmjPre);
+	BRAIN.nmjSlot = Int32Array.from(nmjSlot);
+	BRAIN.nmjWeight = Float64Array.from(nmjWeight);
+	BRAIN.muscleInput = new Float64Array(BRAIN.MUSCLE_ROWS * 2);
 
 	// Locomotion motor neurons and the stretch of body their muscles cover
 	BRAIN.motorNeurons = [];
@@ -180,25 +255,32 @@ BRAIN.setup = function () {
 			rest: 0,
 		});
 	}
-
-	BRAIN.neurons = Object.keys(BRAIN.postSynaptic).filter(function (name) {
-		return !BRAIN.muscleRows[name] && name !== 'MVULVA';
-	});
-
-	// Neurons silenced by the command interneurons that are not in control
-	BRAIN.forwardOnly = BRAIN.FORWARD_COMMAND.slice();
-	BRAIN.backwardOnly = BRAIN.BACKWARD_COMMAND.slice();
-	for (var name in BRAIN.postSynaptic) {
-		if (BRAIN.FORWARD_MOTOR.test(name)) BRAIN.forwardOnly.push(name);
-		if (BRAIN.BACKWARD_MOTOR.test(name)) BRAIN.backwardOnly.push(name);
-	}
 };
 
-BRAIN.randExcite = function () {
-	var keys = Object.keys(BRAIN.connectome);
-	for (var i = 0; i < 40; i++) {
-		BRAIN.dendriteAccumulate(keys[Math.floor(Math.random() * keys.length)]);
-	}
+BRAIN.sigmoid = function (potential) {
+	return 1 / (1 + Math.exp(-(potential - BRAIN.THRESHOLD) / BRAIN.SLOPE));
+};
+
+/**
+ * Adds input to a neuron for the coming tick, the way a sensory or proprioceptive stimulus would.
+ */
+BRAIN.stimulate = function (neuron, amount) {
+	var i = BRAIN.index[neuron];
+	if (i !== undefined) BRAIN.input[i] += amount;
+};
+
+/**
+ * A neuron's output, from 0 (silent) to 1 (fully active).
+ */
+BRAIN.activity = function (neuron) {
+	var i = BRAIN.index[neuron];
+	return i === undefined ? 0 : BRAIN.output[i];
+};
+
+BRAIN.meanActivity = function (neurons) {
+	var sum = 0;
+	for (var i = 0; i < neurons.length; i++) sum += BRAIN.activity(neurons[i]);
+	return sum / neurons.length;
 };
 
 /**
@@ -206,61 +288,74 @@ BRAIN.randExcite = function () {
  * @param {number[]} [bends] Body bend at each joint from head to tail, positive toward the ventral side.
  */
 BRAIN.update = function (bends) {
-	if (BRAIN.stimulateHungerNeurons) {
-		BRAIN.dendriteAccumulate('RIML');
-		BRAIN.dendriteAccumulate('RIMR');
-		BRAIN.dendriteAccumulate('RICL');
-		BRAIN.dendriteAccumulate('RICR');
-	}
-	if (BRAIN.stimulateNoseTouchNeurons) {
-		['FLPR','FLPL','ASHL','ASHR','IL1VL','IL1VR','OLQDL','OLQDR','OLQVR','OLQVL'].forEach(function(n) {
-			BRAIN.dendriteAccumulate(n);
+	var stimulateAll = function (neurons, amount) {
+		neurons.forEach(function (n) {
+			BRAIN.stimulate(n, amount);
 		});
-	}
-	if (BRAIN.stimulateTailTouchNeurons) {
-		// Posterior gentle touch: PLM excites PVC and AVB, which speed the worm forward
-		['PLML', 'PLMR', 'PVDL', 'PVDR'].forEach(function (n) {
-			BRAIN.dendriteAccumulate(n);
-		});
-	}
+	};
+	if (BRAIN.stimulateHungerNeurons) stimulateAll(BRAIN.HUNGER_NEURONS, BRAIN.HUNGER_DRIVE);
+	if (BRAIN.stimulateNoseTouchNeurons) stimulateAll(BRAIN.NOSE_TOUCH_NEURONS, BRAIN.SENSORY_DRIVE);
+	// Posterior touch: PLM and PVD excite PVC and AVB, which speed the worm forward
+	if (BRAIN.stimulateTailTouchNeurons) stimulateAll(BRAIN.TAIL_TOUCH_NEURONS, BRAIN.SENSORY_DRIVE);
+	if (BRAIN.foodGradient > 0.0001) BRAIN.stimulate('ASEL', BRAIN.SENSORY_DRIVE);
+	else if (BRAIN.foodGradient < -0.0001) BRAIN.stimulate('ASER', BRAIN.SENSORY_DRIVE);
+	stimulateAll(['AVBL', 'AVBR'], BRAIN.FORWARD_DRIVE);
 
-	if (BRAIN.foodGradient > 0.0001) {
-		for(var i=0; i<5; i++) BRAIN.dendriteAccumulate('ASEL');
-	} else if (BRAIN.foodGradient < -0.0001) {
-		for(var i=0; i<5; i++) BRAIN.dendriteAccumulate('ASER');
-	}
-
-	if (BRAIN.NOISE) {
-		for (var i = 0; i < BRAIN.neurons.length; i++) {
-			// Roughly Gaussian, with standard deviation NOISE
-			var r = Math.random() + Math.random() + Math.random() - 1.5;
-			BRAIN.stimulate(BRAIN.neurons[i], r * 2 * BRAIN.NOISE);
-		}
-	}
-
-	BRAIN.updateCommand();
 	if (bends && bends.length > 2) BRAIN.proprioception(bends);
-
-	BRAIN.runconnectome();
+	BRAIN.step();
+	BRAIN.updateCommand();
+	BRAIN.motorcontrol();
 };
 
 /**
- * Chooses forward or backward locomotion from the activity of the command interneurons.
+ * Moves every neuron's potential toward its input for one tick.
+ */
+BRAIN.step = function () {
+	// Locals throughout: this runs every tick, and BRAIN has too many properties for fast lookup
+	var V = BRAIN.potential;
+	var R = BRAIN.output;
+	var I = BRAIN.input;
+	var A = BRAIN.adaptation;
+	var pre = BRAIN.synapsePre;
+	var post = BRAIN.synapsePost;
+	var weight = BRAIN.synapseWeight;
+	for (var k = 0; k < pre.length; k++) {
+		I[post[k]] += weight[k] * R[pre[k]];
+	}
+	var gapA = BRAIN.gapA;
+	var gapB = BRAIN.gapB;
+	var coupling = BRAIN.gapCoupling;
+	for (var k = 0; k < gapA.length; k++) {
+		var a = gapA[k];
+		var b = gapB[k];
+		var current = coupling[k] * (V[b] - V[a]);
+		I[a] += current;
+		I[b] -= current;
+	}
+	var relax = BRAIN.RELAX;
+	var noiseScale = 2 * BRAIN.NOISE;
+	var adaptation = BRAIN.ADAPTATION;
+	var adaptRate = 1 / BRAIN.ADAPTATION_TICKS;
+	var threshold = BRAIN.THRESHOLD;
+	var slope = BRAIN.SLOPE;
+	for (var i = 0; i < V.length; i++) {
+		// Roughly Gaussian, with standard deviation NOISE
+		var noise = (Math.random() + Math.random() + Math.random() - 1.5) * noiseScale;
+		V[i] += relax * (I[i] - V[i] - adaptation * A[i] + noise);
+		R[i] = 1 / (1 + Math.exp(-(V[i] - threshold) / slope));
+		A[i] += (R[i] - A[i]) * adaptRate;
+		I[i] = 0;
+	}
+};
+
+/**
+ * Reads the direction of travel off the command interneurons.
  */
 BRAIN.updateCommand = function () {
-	var back = 0;
-	var fwd = 0;
-	for (var n in BRAIN.commandInput) {
-		BRAIN.commandLevel[n] = BRAIN.commandLevel[n] * BRAIN.INPUT_DECAY + BRAIN.commandInput[n] * (1 - BRAIN.INPUT_DECAY);
-		BRAIN.commandInput[n] = 0;
-	}
-	BRAIN.BACKWARD_COMMAND.forEach(function (n) { back += BRAIN.commandLevel[n]; });
-	BRAIN.FORWARD_COMMAND.forEach(function (n) { fwd += BRAIN.commandLevel[n]; });
-	BRAIN.reverseDrive = back / BRAIN.BACKWARD_COMMAND.length - fwd / BRAIN.FORWARD_COMMAND.length;
-
+	BRAIN.reverseDrive = BRAIN.meanActivity(['AVAL', 'AVAR']) - BRAIN.meanActivity(['AVBL', 'AVBR']);
 	if (BRAIN.reversing) {
 		BRAIN.reversalTicks++;
-		if (BRAIN.reversalTicks >= BRAIN.reversalLength && BRAIN.reverseDrive < BRAIN.REVERSE_OFF) {
+		if (BRAIN.reverseDrive < -BRAIN.REVERSE_MARGIN) {
 			BRAIN.reversing = false;
 			// Long reversals are usually followed by an omega turn (Gray et al., 2005)
 			if (BRAIN.reversalTicks > BRAIN.OMEGA_AFTER) {
@@ -269,16 +364,10 @@ BRAIN.updateCommand = function () {
 				BRAIN.headRhythm.ticks = 0;
 			}
 		}
-	} else {
-		var perTick = BRAIN.SPONTANEOUS_REVERSALS / 3600 *
-			Math.exp((BRAIN.reverseDrive - BRAIN.REVERSE_REST) / BRAIN.REVERSE_SCALE);
-		if (Math.random() < perTick) {
-			var range = BRAIN.MIN_REVERSAL_TICKS;
-			BRAIN.reversing = true;
-			BRAIN.reversalTicks = 0;
-			BRAIN.reversalLength = range[0] + Math.random() * (range[1] - range[0]);
-			BRAIN.turning = 0;
-		}
+	} else if (BRAIN.reverseDrive > BRAIN.REVERSE_MARGIN) {
+		BRAIN.reversing = true;
+		BRAIN.reversalTicks = 0;
+		BRAIN.turning = 0;
 	}
 };
 
@@ -384,64 +473,32 @@ BRAIN.proprioception = function (bends) {
 	}
 };
 
-BRAIN.runconnectome = function () {
-	for (var ps in BRAIN.postSynaptic) {
-		if (BRAIN.muscles.indexOf(ps.substring(0, 3)) == -1 && BRAIN.postSynaptic[ps][BRAIN.thisState] > BRAIN.fireThreshold) {
-			BRAIN.fireNeuron(ps);
-		}
-	}
-	BRAIN.motorcontrol();
-	// Whichever command group is in control keeps the other group and its motor neurons quiet
-	var silenced = BRAIN.reversing ? BRAIN.forwardOnly : BRAIN.backwardOnly;
-	for (var i = 0; i < silenced.length; i++) {
-		BRAIN.postSynaptic[silenced[i]][BRAIN.nextState] = 0;
-	}
-	for (var ps in BRAIN.postSynaptic) {
-		BRAIN.postSynaptic[ps][BRAIN.thisState] = BRAIN.postSynaptic[ps][BRAIN.nextState];
-	}
-	var temp = BRAIN.thisState;
-	BRAIN.thisState = BRAIN.nextState;
-	BRAIN.nextState = temp;
-	for (var ps in BRAIN.postSynaptic) BRAIN.postSynaptic[ps][BRAIN.nextState] *= 0.85;
-};
-
-BRAIN.fireNeuron = function (fneuron) {
-	if (fneuron !== 'MVULVA') {
-		BRAIN.dendriteAccumulate(fneuron);
-		BRAIN.postSynaptic[fneuron][BRAIN.nextState] = 0;
-	}
-};
-
 /**
- * Turns this tick's muscle input into smoothed dorsal and ventral activation for each muscle row.
+ * Turns motor neuron output into smoothed dorsal and ventral activation for each muscle row.
  */
 BRAIN.motorcontrol = function () {
-	var input = [];
-	for (var r = 0; r < BRAIN.MUSCLE_ROWS; r++) input.push({ dorsal: 0, ventral: 0 });
-	for (var name in BRAIN.muscleRows) {
-		var muscle = BRAIN.muscleRows[name];
-		// Relative to how heavily the muscle is innervated, so lightly innervated head muscles still pull
-		var val = muscle.innervation ? BRAIN.postSynaptic[name][BRAIN.nextState] / muscle.innervation : 0;
-		if (muscle.dorsal) input[muscle.row].dorsal += val;
-		else input[muscle.row].ventral += val;
-		BRAIN.postSynaptic[name][BRAIN.nextState] = 0;
+	var input = BRAIN.muscleInput; // [row * 2] dorsal, [row * 2 + 1] ventral
+	var pre = BRAIN.nmjPre;
+	var slot = BRAIN.nmjSlot;
+	var weight = BRAIN.nmjWeight;
+	var R = BRAIN.output;
+	input.fill(0);
+	for (var k = 0; k < pre.length; k++) {
+		input[slot[k]] += weight[k] * R[pre[k]];
 	}
-	// Neighbouring muscles share some of their excitation
+	var rows = BRAIN.MUSCLE_ROWS;
 	var c = BRAIN.MUSCLE_COUPLING;
-	var coupled = input.map(function (row, r) {
-		var prev = input[Math.max(0, r - 1)];
-		var next = input[Math.min(BRAIN.MUSCLE_ROWS - 1, r + 1)];
-		return {
-			dorsal: row.dorsal * (1 - c) + (prev.dorsal + next.dorsal) * c / 2,
-			ventral: row.ventral * (1 - c) + (prev.ventral + next.ventral) * c / 2,
-		};
-	});
-	input = coupled;
-	for (var r = 0; r < BRAIN.MUSCLE_ROWS; r++) {
+	var decay = BRAIN.MUSCLE_DECAY;
+	var gain = BRAIN.MUSCLE_GAIN * (1 - decay);
+	for (var r = 0; r < rows; r++) {
+		var prev = Math.max(0, r - 1) * 2;
+		var next = Math.min(rows - 1, r + 1) * 2;
+		// Neighbouring muscles share some of their excitation
+		var dorsal = input[r * 2] * (1 - c) + (input[prev] + input[next]) * c / 2;
+		var ventral = input[r * 2 + 1] * (1 - c) + (input[prev + 1] + input[next + 1]) * c / 2;
 		var act = BRAIN.segmentActivations[r];
 		// Inhibitory input (from DD and VD) can relax a muscle but never push it
-		var gain = BRAIN.MUSCLE_GAIN * (1 - BRAIN.MUSCLE_DECAY);
-		act.dorsal = Math.max(0, act.dorsal * BRAIN.MUSCLE_DECAY + input[r].dorsal * gain);
-		act.ventral = Math.max(0, act.ventral * BRAIN.MUSCLE_DECAY + input[r].ventral * gain);
+		act.dorsal = Math.max(0, act.dorsal * decay + dorsal * gain);
+		act.ventral = Math.max(0, act.ventral * decay + ventral * gain);
 	}
 };

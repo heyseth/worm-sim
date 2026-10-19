@@ -82,7 +82,6 @@ var FOOD_RADIUS = 10;
 var MOUTH_FOOD_HITBOX_RADIUS = FOOD_RADIUS + 2;
 
 BRAIN.setup();
-BRAIN.randExcite();
 
 /* ---------- Controls ---------- */
 
@@ -649,13 +648,6 @@ var hoveredNeuron = null;
 var muscleMax = 1;
 var BRAIN_STRIP = 30;
 var brainSize = 0;
-var firedSinceDraw = {};
-
-var fireNeuron = BRAIN.fireNeuron;
-BRAIN.fireNeuron = function (name) {
-	firedSinceDraw[name] = true;
-	fireNeuron(name);
-};
 
 /**
  * Lays the neurons out on a sunflower spiral, most connected hubs in the middle.
@@ -668,9 +660,7 @@ function buildBrainLayout() {
 			degree[post] = (degree[post] || 0) + 1;
 		}
 	}
-	var names = Object.keys(BRAIN.connectome).filter(function (name) {
-		return BRAIN.muscles.indexOf(name.substring(0, 3)) === -1;
-	});
+	var names = BRAIN.neurons.slice();
 	names.sort(function (a, b) {
 		return (degree[b] || 0) - (degree[a] || 0);
 	});
@@ -700,10 +690,7 @@ function brainGeometry() {
 }
 
 function drawBrain() {
-	if (brainPanel.classList.contains('is-hidden') || !brainSize) {
-		firedSinceDraw = {};
-		return;
-	}
+	if (brainPanel.classList.contains('is-hidden') || !brainSize) return;
 	var dpr = VIEW.dpr;
 	var geo = brainGeometry();
 	bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -724,9 +711,8 @@ function drawBrain() {
 	// Active neurons glow in the accent color
 	for (var i = 0; i < neurons.length; i++) {
 		var nr = neurons[i];
-		// Neurons flash when they fire, then fade
-		if (firedSinceDraw[nr.name]) nr.level = 1;
-		else nr.level *= 0.9;
+		// Neurons glow with their activity
+		nr.level = BRAIN.activity(nr.name);
 		if (nr.level < 0.05) continue;
 		var x = geo.cx + nr.ux * geo.R;
 		var y = geo.cy + nr.uy * geo.R;
@@ -735,7 +721,6 @@ function drawBrain() {
 		bctx.fillStyle = rgba(theme.accent, nr.level);
 		bctx.fill();
 	}
-	firedSinceDraw = {};
 
 	if (hoveredNeuron) {
 		bctx.beginPath();
