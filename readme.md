@@ -1,38 +1,99 @@
 # worm-sim
 
-The tiny worm C. elegans is one of the simplest multicellular organisms, and one of the only organisms in the world to have its connectome (neuron map) completed.
+A browser simulation of the nematode *Caenorhabditis elegans*, in which a model of the worm's nervous system, built from its published connectome, controls a physically simulated body.
 
-Despite being so simple, C. elegans exhibits several complex behaviors. They will attempt to move towards food when they sense it, and move around obstacles when they make contact. After viewing a [video](https://www.youtube.com/watch?v=YWQnzylhgHc) of a connectome being used to simulate a worm brain and control a GoPiGo robot, I wanted to see if something similar could be done in the browser.
-
-In this demo, hunger neurons are continuously stimulated. If the worm nears food, food sensing neurons are stimulated. If its nose reaches the edge of the window, nose touch sensory neurons are stimulated and it backs away; if its tail bumps the edge while backing up, tail touch neurons send it forward again.
+*C. elegans* is one of the simplest multicellular animals and the first whose complete connectome (the map of every neuron and synapse) was reconstructed. Despite its small nervous system it shows a range of behaviours: it crawls by propagating a bending wave along its body, reverses and turns when touched, and moves toward food.
 
 ## Usage
-Head on over to [heyseth.github.io/worm-sim/](https://heyseth.github.io/worm-sim/) and watch the worm wriggle around. Click or tap anywhere to drop food; the worm follows the scent and leaves faint tracks in the agar as it goes.
 
-The panel in the corner shows the connectome live. Each dot is a neuron, laid out on a spiral with the most connected neurons in the middle, and it flashes when that neuron fires. Hover over or tap a dot to see the neuron's name. The two rows of bars underneath show dorsal and ventral muscle activation from head to tail, so you can watch the bending wave travel down the body.
+The simulation runs at [heyseth.github.io/worm-sim](https://heyseth.github.io/worm-sim/). To run it locally, open `index.html` in a browser; no build step is required.
 
-The toolbar at the bottom recenters the worm, clears food, hides the connectome panel and links to the source. The page follows your device's light or dark theme.
+- **Food.** Click or tap to place food. The food-sensing neurons ASEL and ASER are stimulated as the concentration at the worm's head rises or falls. Chemotaxis in the model is still rudimentary, so the worm does not yet seek food reliably.
+- **Touch.** When the worm's nose meets the edge of the window, the nose touch neurons are stimulated and the worm reverses. If its tail meets the edge while reversing, the tail touch neurons are stimulated and it moves forward again.
+- **Hunger.** The interneurons RIM and RIC receive a constant input, representing a worm that has been away from food, which raises the rate of spontaneous reversals.
+- **Connectome panel.** Each dot is a neuron, arranged in a spiral with the most highly connected neurons at the centre, and brightens with that neuron's activity. Hover over or tap a dot to see its name. The two rows of bars beneath show dorsal and ventral muscle activation from head to tail, so the bending wave can be seen travelling along the body.
+- **Toolbar.** The toolbar recentres the worm, clears food, toggles the connectome panel and links to this repository.
 
-To reiterate, the worm you see on your screen is being controlled entirely by a simulated virtual worm brain. Very cool if you ask me!
+**The worm's movement is produced entirely by the simulated nervous system; there is no scripted animation!**
 
-## How Movement Works
+## The Nervous System
 
-The worm is modeled as a chain of linked body nodes. Each frame, the simulated connectome updates its neuron activity, and the output onto the body wall muscles becomes dorsal and ventral activation for each of the 24 muscle rows from head to tail. The worm crawls on its side, so dorsal and ventral are the two directions it can bend on the agar.
+### Connectome
 
-Nothing injects a bending wave into the muscles. The wave is made by motor neurons and proprioception (the body sensing its own posture):
+The wiring is the adult hermaphrodite connectome of Cook et al. (2019): 272 neurons with their chemical synapses, gap junctions and neuromuscular junctions. `tools/build_connectome.py` generates `js/constants.js` from the published tables.
 
-* **Forward.** The head motor neurons (SMD and RMD) swing the head from side to side, about 0.6 times a second; real worms keep this head rhythm even when the rest of the body is paralysed. Each B-type motor neuron (DB, VB) senses how the body just in front of its muscles is bent and switches on to bend its own stretch the same way, so each bend travels from head to tail (Wen et al., 2012; Boyle, Berri & Cohen, 2012).
-* **Backward.** The same in reverse: the A-type motor neurons in the tail (DA, VA) set the rhythm and the others follow the body just behind them, so the wave travels from tail to head.
-* **Choosing a direction.** The command interneurons decide which circuit runs, AVB and PVC for forward and AVA, AVD and AVE for backward, and the group in control silences the other. Reversals start at random, about once or twice a minute, at a rate that climbs steeply with the input to the backward command neurons, so a nose touch makes one almost certain. Long reversals end in an omega turn, a deep ventral bend of the head (driven by RIV and SMDV) that sends the worm off in a new direction.
+The connectome specifies which cells are connected but not whether each chemical synapse is excitatory or inhibitory. Synaptic signs are taken from Fenyves et al. (2020), who predicted them from each neuron's neurotransmitter and the receptors expressed by its partner. Two further rules apply:
 
-The body is overdamped, as it is for a real worm at this size: there is no momentum, and each node moves at a speed set by the forces on it and by drag that is 30 times higher sideways than lengthwise, as in a groove in agar. That difference in drag is the only thing that turns the bending wave into motion, so a head-to-tail wave carries the worm forward at about 0.2 body lengths a second and a tail-to-head wave carries it backward. Steering likewise comes only from the head bending further to one side than the other.
+- RIM's synapses onto AVB, RMD, SMD and the neck muscles are inhibitory, because RIM releases tyramine, which inhibits these cells through the tyramine-gated chloride channel LGC-55 (Pirri et al., 2009).
+- At neuromuscular junctions, acetylcholine is excitatory and GABA inhibitory.
+
+Synapses whose sign could not be predicted are omitted.
+
+### Neuron model
+
+Most *C. elegans* neurons do not fire action potentials, so each simulated neuron has a graded membrane potential and an output between 0 and 1. Chemical synapses transmit the presynaptic output scaled by the signed synaptic weight, and gap junctions pass current in proportion to the difference in potential between the coupled cells. Each neuron also adapts slowly to its own recent activity and receives a small random input representing synaptic and channel noise.
+
+### Modelling assumption
+
+One element of the wiring is assumed rather than taken from data. The forward and backward command interneurons are active at different times in real worms (Kato et al., 2015), and circuit models commonly represent this as mutual inhibition (Roberts et al., 2016). The predicted synaptic signs do not contain such inhibition, so the model adds it: AVA and AVD inhibit AVB and PVC, and vice versa. All other connections come from the published data.
+
+## Locomotion
+
+### Body mechanics
+
+The body is modelled as a chain of linked segments. At each time step, motor neuron output determines the activation of the dorsal and ventral muscles in each of 24 muscle rows from head to tail; because the worm crawls on its side, these are the two directions in which it bends on the agar surface.
+
+At the worm's scale inertia is negligible, so the body is overdamped: each segment moves at a velocity set by the forces acting on it and by drag that is 30 times greater perpendicular to the body than along it, as for a worm crawling in a groove in agar. This anisotropic drag is what converts the bending wave into motion. A wave travelling from head to tail propels the worm forward at about 0.2 body lengths per second, and a wave travelling from tail to head propels it backward. Steering arises solely from asymmetric bending of the head.
+
+### Generating the bending wave
+
+No bending wave is imposed on the muscles. The wave is generated by the motor neurons together with proprioception, the body's sensing of its own posture:
+
+- **Forward locomotion.** The head motor neurons SMD and RMD alternate between dorsal and ventral activation at about 0.6 Hz. Real worms maintain this head rhythm even when the rest of the body is paralysed (Fouad et al., 2018). Each B-type motor neuron (DB, VB) senses the curvature of the body immediately anterior to its muscles and activates to bend its own segment the same way, so each bend propagates from head to tail (Wen et al., 2012; Boyle, Berri & Cohen, 2012).
+- **Backward locomotion.** The same mechanism operates in reverse. The A-type motor neurons in the tail (DA, VA) set the rhythm (Gao et al., 2018), and the remaining A-type neurons follow the curvature immediately posterior to them, so the wave travels from tail to head.
+
+### Choosing a direction
+
+The command interneurons determine which circuit is active: AVB and PVC drive forward locomotion, and AVA and AVD drive backward locomotion. The worm reverses whenever AVA is more active than AVB.
+
+- **Touch-evoked reversals.** A nose touch excites AVA and AVD through the connectome and shifts the balance toward reversal within a fraction of a second.
+- **Spontaneous reversals.** Noise in the network occasionally shifts the balance, producing spontaneous reversals about once or twice a minute. Each reversal ends as AVA adapts.
+- **Omega turns.** Long reversals are followed by an omega turn, a deep ventral bend of the head driven by RIV and SMDV, which reorients the worm (Gray, Hill & Bargmann, 2005).
+
+## Development
+
+`tools/measure.js` runs the simulation without a browser and reports forward and backward speed, reversal rate and duration, head-swing frequency and touch responses, for comparing the model with measurements from real worms:
+
+```
+node tools/measure.js 120 open    # two minutes with no walls
+node tools/measure.js 20 touch    # a nose touch after five seconds
+```
+
+To regenerate the connectome, download the two source tables listed at the top of `tools/build_connectome.py` and run:
+
+```
+python3 tools/build_connectome.py COOK.xlsx FENYVES.xlsx
+```
+
+## References
+
+- Boyle, J. H., Berri, S. & Cohen, N. (2012). Gait modulation in *C. elegans*: an integrated neuromechanical model. *Frontiers in Computational Neuroscience*.
+- Cook, S. J. et al. (2019). Whole-animal connectomes of both *Caenorhabditis elegans* sexes. *Nature*.
+- Fenyves, B. G. et al. (2020). Synaptic polarity and sign-balance prediction using gene expression data in the *Caenorhabditis elegans* chemical synapse neuronal connectome network. *PLoS Computational Biology*.
+- Fouad, A. D. et al. (2018). Distributed rhythm generators underlie *Caenorhabditis elegans* forward locomotion. *eLife*.
+- Gao, S. et al. (2018). Excitatory motor neurons are local oscillators for backward locomotion. *eLife*.
+- Gray, J. M., Hill, J. J. & Bargmann, C. I. (2005). A circuit for navigation in *Caenorhabditis elegans*. *PNAS*.
+- Kato, S. et al. (2015). Global brain dynamics embed the motor command sequence of *Caenorhabditis elegans*. *Cell*.
+- Pirri, J. K. et al. (2009). A tyramine-gated chloride channel coordinates distinct motor programs of a *Caenorhabditis elegans* escape response. *Neuron*.
+- Roberts, W. M. et al. (2016). A stochastic neuronal model predicts random search behaviors at multiple spatial scales in *C. elegans*. *eLife*.
+- Wen, Q. et al. (2012). Proprioceptive coupling within motor neurons drives *C. elegans* forward locomotion. *Neuron*.
 
 ## License
 
-This project is licensed under the MIT License - see the license.md file for details.
+This project is licensed under the MIT License; see `license.md` for details.
 
 ## Acknowledgments
-Huge thanks to:
-* Timothy Busbice, Gabriel Garrett, Geoffrey Churchill, and all other contributors to the [GoPiGo Connectome](https://github.com/Connectome/GoPiGo).
-* [Zach Rispoli](https://github.com/zrispo), for porting the connectome to JavaScript.
-* [ARTsinn](http://jsfiddle.net/user/ARTsinn/fiddles/), for their awesome canvas worm demo, which served as inspiration for this project.
+
+- Timothy Busbice, Gabriel Garrett, Geoffrey Churchill and the other contributors to the [GoPiGo Connectome](https://github.com/Connectome/GoPiGo), on which the original version of this simulation was based.
+- [Zach Rispoli](https://github.com/zrispo), for the initial porting of the GoPiGo connectome to JavaScript.
+- [OpenWorm's ConnectomeToolbox](https://github.com/openworm/ConnectomeToolbox) and the [WormNeuroAtlas](https://github.com/francescorandi/wormneuroatlas), which host the connectome and synaptic-sign tables used here.
